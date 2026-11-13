@@ -259,7 +259,7 @@ export function forPlayer(room,id){
   const ids=edge.split('|');
   if(owner===id||ids.some(x=>view.visible.has(x)))roads[edge]=owner;
  }
- return {code:room.code,host:room.host,players,game:{...g,tiles,roads,
+ return {code:room.code,host:room.host,players,game:{...g,tiles,roads,scores:Object.fromEntries(room.players.map(x=>[x.id,points(g,x.id)])),
    lastBattle:g.lastBattle&&(g.lastBattle.attacker===players.find(p=>p.id===id)?.name||g.lastBattle.defender===players.find(p=>p.id===id)?.name)?g.lastBattle:null,
    spawnChoices:g.phase==='draft'?g.spawnChoices:[],draftOrder:g.phase==='draft'?g.draftOrder:[]}};
 }
