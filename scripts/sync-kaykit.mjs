@@ -5,6 +5,8 @@ import path from 'node:path';
 const root='https://raw.githubusercontent.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0/main/';
 const prefix='addons/kaykit_medieval_hexagon_pack/Assets/gltf/';
 const target=path.resolve('public/assets/kaykit');
+const characterRoot='https://raw.githubusercontent.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0/main/addons/kaykit_character_pack_adventures/';
+const characters=['Knight','Rogue','Barbarian'];
 const objects=[
   ...['blue','red','green','yellow'].flatMap(color=>['home_A','castle','tower_A','barracks'].map(name=>'buildings/'+color+'/building_'+name+'_'+color)),
   ...['trees_A_small','trees_B_small','tree_single_A','rock_single_A','hills_A','mountain_A_grass'].map(name=>'decoration/nature/'+name)
@@ -31,8 +33,18 @@ for(let i=0;i<objects.length;i+=4){
   await Promise.all(objects.slice(i,i+4).map(x=>download(x+'.gltf')));
   process.stdout.write('.');
 }
+for(const name of characters){
+  const response=await fetch(characterRoot+'Characters/gltf/'+name+'.glb');
+  if(!response.ok)throw Error('Cannot download character '+name+': '+response.status);
+  await mkdir(path.join(target,'characters'),{recursive:true});
+  await writeFile(path.join(target,'characters',name+'.glb'),Buffer.from(await response.arrayBuffer()));
+  process.stdout.write('♟');
+}
+const charLicense=await fetch(characterRoot+'LICENSE.txt');
+if(!charLicense.ok)throw Error('Cannot retrieve KayKit character license.');
+await writeFile(path.join(target,'LICENSE-ADVENTURERS.txt'),await charLicense.text());
 const license=await fetch(root+'LICENSE.txt');
 if(!license.ok)throw Error('Could not retrieve CC0 license.');
 await writeFile(path.join(target,'LICENSE-KAYKIT.txt'),await license.text());
-await writeFile(path.join(target,'manifest.json'),JSON.stringify({source:root,license:'CC0-1.0',models:objects,generated:new Date().toISOString()},null,2));
-console.log('\n'+objects.length+' KayKit models synchronized. Restart or refresh Riskagon.');
+await writeFile(path.join(target,'manifest.json'),JSON.stringify({source:root,license:'CC0-1.0',models:objects,characters,characterSource:characterRoot,generated:new Date().toISOString()},null,2));
+console.log('\n'+objects.length+' environment models and '+characters.length+' playable troops synchronized. Restart or refresh Riskagon.');
