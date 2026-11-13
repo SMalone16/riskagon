@@ -175,15 +175,56 @@ function render(){
 $('#create').onclick=()=>command('room:create',{id,name:username()},r=>{displayRoom(r.code);toast('Realm created. Invite your friends!');});
 $('#join').onclick=()=>joinRoom($('#codeInput').value);
 $('#codeInput').onkeydown=e=>{if(e.key==='Enter')joinRoom(e.target.value);};
+
 root.addEventListener('click',async e=>{
- const action=e.target.closest('[data-action]')?.dataset.action;
- if(!action)return;
- if(action==='copy'){try{await navigator.clipboard.writeText(location.href);toast('Invitation copied!');}catch{toast(location.href);}return;}
- if(action==='bot'||action==='start'){command('room:'+(action==='bot'?'addBot':'start'),{},()=>toast(action==='bot'?'AI kingdom joined.':'Conquest begins!'));return;}
- if(action==='road'){roadMode=!roadMode;marchFrom=null;render();return;}
- if(action==='march'){marchFrom=marchFrom?null:selected;roadMode=false;render();return;}
- if(action==='end'||action==='roll'){act({type:action});return;}
- if(['settlement','fort','recruit'].includes(action)){act({type:action,tile:selected});}
+ const element=e.target.closest('[data-action],[data-color],[data-spawn],[data-build]');
+ if(!element||element.disabled)return;
+ if(element.dataset.color){
+  command('draft:pick',{kind:'color',value:element.dataset.color},()=>toast('Banner color drafted.'));
+  return;
+ }
+ if(element.dataset.spawn){
+  command('draft:pick',{kind:'spawn',value:element.dataset.spawn},()=>toast('Homeland secured.'));
+  return;
+ }
+ if(element.dataset.build){
+  const kind=element.dataset.build;
+  act(kind==='bridge'?{type:'bridge',tile:selected}:{type:'build',tile:selected,kind});
+  return;
+ }
+ const action=element.dataset.action;
+ if(action==='copy'){
+  try{await navigator.clipboard.writeText(location.href);toast('Invite link copied.');}
+  catch{toast(location.href);}
+  return;
+ }
+ if(action==='bot'||action==='start'){
+  command('room:'+(action==='bot'?'addBot':'start'),{},()=>toast(action==='bot'?'AI kingdom joined.':'Color draft begins!'));
+  return;
+ }
+ if(action==='physicalRoll'){
+  if(dice.running||!isActive()||state.game.rolled)return;
+  dice.dragging={index:0,startX:0,startY:0,lastX:0,lastY:0,time:performance.now()-350};
+  dice.up({clientX:30,clientY:-25});
+  return;
+ }
+ if(action==='road'){
+  roadMode=!roadMode;marchFrom=null;buildOpen=false;board.reset();
+  if(roadMode)toast('Gold roads are buildable. Click a glowing shared border.');
+  render();return;
+ }
+ if(action==='openBuild'){buildOpen=true;board.focus(selected);render();return;}
+ if(action==='closeBuild'){buildOpen=false;board.reset();render();return;}
+ if(action==='march'){
+  marchFrom=marchFrom?null:selected;roadMode=false;buildOpen=false;board.reset();
+  render();return;
+ }
+ if(action==='deploy'){
+  const reserve=state.game.reinforcements?.[id]||0;
+  if(reserve>0)act({type:'deploy',tile:selected,count:reserve});
+  return;
+ }
+ if(action==='end'){buildOpen=false;roadMode=false;board.reset();act({type:'end'});return;}
 });
 root.addEventListener('change',e=>{if(e.target.id==='amount')amount=Math.max(1,Math.floor(Number(e.target.value)||1));});
 const toggleHelp=()=>{$('#rules').hidden=!$('#rules').hidden;};
@@ -195,5 +236,18 @@ socket.on('connect',()=>{
  });
 });
 socket.on('disconnect',()=>{$('#online').textContent='● RECONNECTING';$('#online').className='';});
-socket.on('state',next=>{state=next;if(code!==state.code)displayRoom(state.code);render();});
+
+socket.on('state',next=>{
+ const battle=next.game?.lastBattle;
+ const signature=battle?JSON.stringify({source:battle.source,target:battle.target,rounds:battle.rounds}):'';
+ state=next;
+ if(code!==state.code)displayRoom(state.code);
+ render();
+ if(signature&&signature!==lastBattleKey){
+  lastBattleKey=signature;
+  dice.playCombat(battle.rounds);
+  toast('⚔ '+battle.attacker+' attacked '+battle.defender+' — '+battle.result);
+ }
+ if(!signature)lastBattleKey='';
+});
 render();
