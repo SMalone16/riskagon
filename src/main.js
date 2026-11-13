@@ -32,9 +32,18 @@ root.innerHTML=`
 <button class="primary full" id="doneRules">RETURN TO GAME</button></div></div>`;
 $('#name').value=localStorage.getItem('riskagon:name')||'Commander';
 function toast(message,error=false){const t=$('#toast');t.textContent=message;t.className=error?'show error':'show';setTimeout(()=>t.className='',3500);}
+
 const preview=()=>{
- const resources=['forest','pasture','fields','hills','mountains','fields','forest','hills','pasture','desert','mountains','fields','forest','pasture','hills','fields','forest','pasture','mountains'];
- let i=0,tiles=[];for(let q=-2;q<=2;q++)for(let r=-2;r<=2;r++)if(Math.abs(q+r)<=2)tiles.push({q,r,id:q+','+r,terrain:resources[i++],number:i===10?null:[3,5,9,4,6,10,11,8,2,0,12,5,6,3,9,10,4,8,11][i-1],owner:null,army:0,building:0});
+ const tiles=[],terrain=['forest','fields','pasture','hills','mountains'];
+ for(let q=-5;q<=5;q++)for(let r=-5;r<=5;r++)if(Math.abs(q+r)<=5){
+  // Clumped starter preview mirrors the game's expansive realm before draft.
+  const region=Math.floor((q+5)/2)+Math.floor((r+5)/2)*3;
+  const lake=['0,0','1,0','0,1','-1,1','1,-1'];
+  const river=['-3,1','-2,1','-2,2','-1,2'];
+  const key=q+','+r;
+  tiles.push({q,r,id:key,terrain:lake.includes(key)?'lake':river.includes(key)?'river':terrain[(region+10)%5],
+   number:null,owner:null,army:0,building:0,structures:[],condensed:false,masked:true});
+ }
  return tiles;
 };
 function me(){return state?.players.find(p=>p.id===id);}
