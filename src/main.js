@@ -81,9 +81,9 @@ const board=new Board($('#board'),tile=>{
  render();
 },edge=>{if(roadMode)act({type:'road',edge});});
 board.update(preview(),{});
-const dice=new DiceTray($('#diceStage'),()=>new Promise((resolve,reject)=>{
+const dice=new DiceTray($('#diceStage'),(throwData)=>new Promise((resolve,reject)=>{
  if(!isActive()||state.game.rolled){reject(Error('Wait for your turn.'));return;}
- socket.emit('game:action',{type:'roll'},response=>{
+ socket.emit('game:action',{type:'roll',throw:throwData},response=>{
   if(!response?.ok){toast(response?.error||'Roll failed',true);reject(Error(response?.error));return;}
   resolve(response.roll);
  });
