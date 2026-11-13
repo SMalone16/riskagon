@@ -8,7 +8,7 @@
 - GitHub source: https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0
 - License: CC0 1.0. The free core contains ~200 hex tiles, buildings and props, 4 team colors; the extended characters/units are an optional separately distributed pack.
 - Formats: glTF/FBX, single gradient material atlas per models.
-- `npm run assets:sync` installs **22 selected glTF models**, their referenced `.bin` buffers, textures, and the CC0 license into `public/assets/kaykit/`. Generated download assets are gitignored to keep the repository lean.
+- `npm run assets:sync` installs **22 selected glTF terrain/building models, plus three character GLBs (Knight, Rogue and Barbarian)**, their referenced `.bin` buffers, textures, and the CC0 license into `public/assets/kaykit/`. Generated download assets are gitignored to keep the repository lean.
 - Renderer automatically discovers local manifest. If absent, all assets fall back to procedural Three.js art (no broken-image placeholders).
 - At runtime all models are served by the same Codespaces origin; nothing downloads from KayKit servers during play.
 
@@ -37,3 +37,7 @@
 - **Terrain**: mountain, tree, farm, pasture, hill props are decoration, not separately clickable. Keep their proportions under 40% of hex footprint.
 - **Future art**: render or import lightweight GLBs for warriors, archers, cavalry, ships, siege units. For mobile keep meshes instanced and materials shared.
 - **Legal**: while CC0 is permissive, keep the source, version and license record with any vendored assets. Avoid copying the copyrighted Catan/Risk visual identity, logos or official art.
+
+## Character model integration (v0.2)
+
+The automated sync downloads Knight.glb, Rogue.glb and Barbarian.glb from the official [KayKit Adventurers GitHub repository](https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0) to `public/assets/kaykit/characters/` and preserves `LICENSE-ADVENTURERS.txt` (CC0-1.0). `src/board.js` loads and skeleton-clones each character with `GLTFLoader` and `SkeletonUtils.clone`; the model height is normalized to the board, and a team-colored pedestal marks ownership. Full idle/movement/combat animation mixer support remains planned. All players can still see functioning Three.js fallback models if the asset pack is missing.
