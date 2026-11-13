@@ -67,7 +67,7 @@ const board=new Board($('#board'),tile=>{
  }
  selected=tile;roadMode=false;
  const owner=g.tiles.find(t=>t.id===tile)?.owner;
- buildOpen=owner===id;
+ buildOpen=owner===id||canBridgeTile(g.tiles.find(t=>t.id===tile));
  if(buildOpen)board.focus(tile);else board.reset();
  render();
 },edge=>{if(roadMode)act({type:'road',edge});});
@@ -96,8 +96,16 @@ const structureNotes={
 };
 const industry={forest:'lumberyard',fields:'farm',hills:'quarry',mountains:'mine',pasture:'ranch'};
 const costLabel=k=>Object.entries(costs[k]||{}).map(([r,n])=>n+' '+icons[r]).join(' · ');
+function canBridgeTile(tile){
+ if(!tile||tile.terrain!=='river'||tile.bridge)return false;
+ return state?.game?.tiles.some(other=>{
+  if(other.owner!==id)return false;
+  const dq=tile.q-other.q,dr=tile.r-other.r;
+  return Math.max(Math.abs(dq),Math.abs(dr),Math.abs(dq+dr))===1;
+ })||false;
+}
 function buildPanel(tile){
- if(!tile||tile.owner!==id)return '';
+ if(!tile||(tile.owner!==id&&!canBridgeTile(tile)))return '';
  const options=tile.terrain==='river'?['bridge']:(tile.building?['homes','walls','armory',industry[tile.terrain],'barracks','stables'].filter(Boolean):['outpost']);
  return `<div class="builder"><div class="eyebrow">BUILD IN ${safe(kinds[tile.terrain]).toUpperCase()}</div><div class="builder-caption">Select a structure. Upgrades activate when this province's dice number is rolled.</div>
  ${options.map(kind=>`<button class="build-option" data-build="${kind}" ${canAct()&&canPay(kind)&&!tile.structures?.includes(kind)?'':'disabled'}><strong>${safe(kind[0].toUpperCase()+kind.slice(1))}</strong><small>${safe(structureNotes[kind])}</small><span>${costLabel(kind)} ${tile.structures?.includes(kind)?' · BUILT':''}</span></button>`).join('')}
@@ -134,7 +142,7 @@ function render(){
   board.update(g.tiles,{players:state.players,myId:id,spawnChoices:g.draftStage==='spawn'?g.spawnChoices:[]});
   $('#mapFooter').textContent='✦ All terrain is public. Territory ownership and hidden units depend on scouting.';
  }else if(g){
-  const own=tile?.owner===id,max=own?Math.max(1,tile.army-1):1;amount=Math.min(amount,max);
+  const own=tile?.owner===id,canBridge=canBridgeTile(tile),max=own?Math.max(1,tile.army-1):1;amount=Math.min(amount,max);
   const winner=state.players.find(p=>p.id===g.winner);
   const canMove=canAct()&&own&&tile.army>1&&g.mobilityUsed<(g.mobilityCap||2);
   const reserve=g.reinforcements?.[id]||0;
@@ -145,7 +153,7 @@ function render(){
   <div class="mobility">TROOPS TO DEPLOY <b>${reserve} remaining</b></div>
   <div class="eyebrow spaced">SELECTED PROVINCE</div>
   <div class="selected">${tile?`<b>${safe(kinds[tile.terrain])}</b><p>${tile.numberHidden?'Dice number hidden · scout within 5 hexes':'Dice: '+(tile.number??'—')}<br>${tile.owner?state.players.find(p=>p.id===tile.owner)?.name:'Unclaimed or hidden'} · ${tile.masked?'Forces unknown':tile.army+' soldiers'}<br>${tile.structures?.length?'Structures: '+safe(tile.structures.join(', ')):'No structures'}</p>`:'<p>Click a hexagon to inspect it. Your territories have gold borders.</p>'}</div>
-  ${own&&buildOpen?buildPanel(tile):`<div class="eyebrow spaced">BUILD & EXPAND</div>${btn('⌂ Zoom into selected settlement','openBuild',own,'secondary full')}`}
+  ${(own||canBridge)&&buildOpen?buildPanel(tile):`<div class="eyebrow spaced">BUILD & EXPAND</div>${btn(canBridge?'≈ Build a river bridge':'⌂ Zoom into selected settlement','openBuild',own||canBridge,'secondary full')}`}
   <div class="eyebrow spaced">ROAD NETWORK</div>
   ${btn(roadMode?'✕ Exit road construction':'══ BUILD ROAD · '+costLabel('road'),'road',canAct()&&canPay('road'),roadMode?'secondary full chosen':'secondary full')}
   <p class="hint">${roadMode?'Golden markers show every legal shared edge. Click one to place a road.':'Roads belong on the hex sides. Roads you own reveal land two hexes away.'}</p>
