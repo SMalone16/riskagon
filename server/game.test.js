@@ -25,11 +25,11 @@ test('actions require roll and ownership',()=>{
 test('settlement and recruitment validate resources',()=>{
  const r=setup(),p=r.players[0],tile=r.game.tiles.find(t=>t.owner===p.id);
  applyAction(r,p.id,{type:'roll'});
- const n=tile.army;
+ const n=tile.army,ore=p.resources.ore,sheep=p.resources.sheep;
  applyAction(r,p.id,{type:'recruit',tile:tile.id});
  assert.equal(tile.army,n+2);
- assert.equal(p.resources.ore,3);
- assert.equal(p.resources.sheep,3);
+ assert.equal(p.resources.ore,ore-1);
+ assert.equal(p.resources.sheep,sheep-1);
 });
 test('march captures neutral, road uses canonical shared edge',()=>{
  const r=setup(),p=r.players[0],from=r.game.tiles.find(t=>t.owner===p.id),to=r.game.tiles.find(t=>!t.owner&&neighbors(t,from));
