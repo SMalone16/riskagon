@@ -103,3 +103,36 @@ button:active:not(:disabled){transform:translateY(1px)}
 .center{padding:15px 10px}.map{height:490px;min-height:490px;flex:none}.maphead h2{font-size:19px}.round small{font-size:8px}
 .right{display:flex;padding:22px 20px;gap:15px}.right>section{border-bottom:1px solid var(--line)}.rules-content{padding:25px}
 }
+
+
+/* v0.2 — physical dice and the accessible province construction overlay */
+.dice-hud{position:absolute;z-index:5;right:17px;bottom:41px;width:246px;padding:10px 10px 8px;border:1px solid #a89263;border-radius:10px;background:linear-gradient(145deg,#1c3031ed,#12252aeb);box-shadow:0 10px 35px #0824268a;backdrop-filter:blur(5px)}
+.dice-caption{display:flex;align-items:center;justify-content:space-between;gap:6px;color:#f7dda5;font-size:9px;letter-spacing:.08em;font-weight:800}
+.dice-caption small{color:#c3d2c5;font-size:8px;letter-spacing:0;font-weight:500}
+.dice-stage{position:relative;height:141px;width:100%;cursor:grab;touch-action:none}
+.dice-stage canvas{width:100%;height:100%;display:block;touch-action:none}
+.dice-stage.armed{outline:1px solid #eac88466;outline-offset:-3px;border-radius:7px}
+.dice-stage.armed canvas{cursor:grab}
+.dice-stage.rolling canvas{cursor:progress}
+.dice-note{min-height:14px;margin-top:5px;text-align:center;color:#b6bfae;font-size:9px}
+#diceFallback{min-height:28px;width:100%;border-radius:4px;background:#d9b779;color:#273c38;font-size:10px;letter-spacing:.1em;font-weight:800}
+#diceFallback:hover:not(:disabled){background:#ffe0a4}
+.color-draft{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0}
+.color-draft button{display:flex;align-items:center;gap:10px;justify-content:center;border:1px solid #4e6968;border-radius:7px;background:#253c43;color:#f0e6d5;padding:15px 8px;font-size:10px;letter-spacing:.13em;font-weight:800}
+.color-draft button:hover:not(:disabled){background:#34545a;border-color:#e4c58d}
+.color-draft button .color{width:17px;height:17px}
+.draft-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:20px}
+.draft-options button{background:#29413f;border:1px solid #b79858;color:#f2d89c;border-radius:7px;padding:12px 9px;font-size:11px;font-weight:800}
+.draft-options button:hover:not(:disabled){background:#586041}
+.dice-prompt{border:1px solid #8a7b566b;border-radius:8px;background:#504a312e;color:#e2c38e;font-size:11px;line-height:1.65;padding:12px;margin:7px 0}
+.builder{border:1px solid #695a3a;background:#152d31;border-radius:8px;padding:12px;margin-top:15px;max-height:390px;overflow-y:auto}
+.builder-caption{color:#a8beb1;line-height:1.55;font-size:10px;margin:11px 0}
+.build-option{display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:3px;margin-top:7px;width:100%;background:#243c41;color:#efe3cf;border:1px solid #4e6565;border-radius:6px;padding:10px}
+.build-option strong{font:16px 'Marcellus',serif;color:#f0d8ad}
+.build-option small{font-size:10px;color:#a3b8ae;line-height:1.6}
+.build-option span{font-size:10px;color:#e7c18b;margin-top:4px}
+.build-option:hover:not(:disabled){border-color:#dfb96a;background:#314e4d}
+.left{overflow-y:auto}
+.map{isolation:isolate}
+@media(max-width:1000px){.dice-hud{width:190px;right:10px;bottom:35px}.dice-stage{height:115px}.dice-caption small{display:none}}
+@media(max-width:700px){.map{height:520px;min-height:520px}.dice-hud{width:170px;bottom:37px;right:7px;padding:7px}.dice-stage{height:100px}#diceFallback{font-size:9px}.dice-note{font-size:8px}.watermark{font-size:8px;top:12px;left:12px}}
