@@ -1,0 +1,87 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {io} from 'socket.io-client';
+import {fileURLToPath} from 'node:url';
+const root=fileURLToPath(new URL('../',import.meta.url));
+const emit=(socket,event,data={})=>new Promise((resolve,reject)=>socket.timeout(15000).emit(event,data,(error,r)=>error?reject(error):resolve(r)));
+async function waitFor(socket,predicate){
+ if(predicate(socket.latest))return socket.latest;
+ return new Promise((resolve,reject)=>{
+  const timer=setTimeout(()=>{socket.off('state',check);reject(Error('Timed out waiting for game state'));},30000);
+  const check=state=>{if(predicate(state)){clearTimeout(timer);socket.off('state',check);resolve(state);}};
+  socket.on('state',check);
+ });
+}
+test('two clients share authoritative replay, reconnect safely, enforce deployment, and play against AI',{timeout:90000},async t=>{
+ const child=spawn(process.execPath,['server/index.js'],{cwd:root,env:{...process.env,NODE_ENV:'production',PORT:'0'},stdio:['ignore','pipe','pipe']});
+ const sockets=[];
+ t.after(()=>{for(const socket of sockets)socket.disconnect();child.kill();});
+ const url=await new Promise((resolve,reject)=>{
+  let out='';const timer=setTimeout(()=>reject(Error('Server startup timed out')),10000);
+  child.once('error',reject);child.once('exit',code=>{if(code)reject(Error('Server exited: '+out));});
+  child.stdout.on('data',chunk=>{out+=chunk;const match=out.match(/http:\/\/localhost:\d+/);if(match){clearTimeout(timer);resolve(match[0]);}});
+  child.stderr.on('data',chunk=>out+=chunk);
+ });
+ const connect=async()=>{
+  const socket=io(url,{transports:['websocket'],reconnection:false});sockets.push(socket);
+  socket.on('state',state=>socket.latest=state);await once(socket,'connect');return socket;
+ };
+ const a=await connect(),b=await connect(),aid='smoke-human-a',bid='smoke-human-b';
+ assert.equal((await emit(a,'room:create',{id:aid,name:'Alpha'})).ok,true);
+ await waitFor(a,s=>s?.code);const code=a.latest.code;
+ assert.equal((await emit(b,'room:join',{code,id:bid,name:'Beta'})).ok,true);
+ assert.equal((await emit(a,'room:start')).ok,true);
+ await waitFor(a,s=>s?.game?.phase==='draft');
+ assert.equal((await emit(a,'draft:pick',{kind:'color',value:'blue'})).ok,true);
+ assert.equal((await emit(b,'draft:pick',{kind:'color',value:'red'})).ok,true);
+ assert.equal((await emit(b,'draft:pick',{kind:'spawn',value:'5,0'})).ok,true);
+ assert.equal((await emit(a,'draft:pick',{kind:'spawn',value:'-5,0'})).ok,true);
+ await waitFor(a,s=>s?.game?.phase==='playing');
+ assert.equal((await emit(a,'game:action',{type:'roll',throw:{vx:3,vz:-2}})).ok,true);
+ const rolling=await waitFor(a,s=>s?.game?.turnStage==='rolling');
+ await waitFor(b,s=>s?.game?.lastRoll?.id===rolling.game.lastRoll.id);
+ assert.deepEqual(a.latest.game.lastRoll.frames,b.latest.game.lastRoll.frames);
+ assert.equal((await emit(a,'game:action',{type:'end'})).ok,false);
+ b.disconnect();const reconnected=await connect();
+ assert.equal((await emit(reconnected,'room:join',{code,id:bid,name:'Beta'})).ok,true);
+ await waitFor(reconnected,s=>s?.game?.lastRoll?.id===rolling.game.lastRoll.id);
+ assert.deepEqual(reconnected.latest.game.lastRoll.frames,rolling.game.lastRoll.frames);
+ await waitFor(a,s=>s?.game?.turnStage==='orders');
+ assert.equal((await emit(a,'game:action',{type:'end'})).ok,true);
+ assert.equal((await emit(reconnected,'game:action',{type:'roll'})).ok,true);
+ await waitFor(reconnected,s=>s?.game?.turn===1&&s?.game?.turnStage==='orders');
+ assert.equal((await emit(reconnected,'game:action',{type:'end'})).ok,true);
+ await waitFor(a,s=>s?.game?.round===2&&s?.game?.turnStage==='roll');
+ assert.equal((await emit(a,'game:action',{type:'roll'})).ok,true);
+ await waitFor(a,s=>s?.game?.round===2&&s?.game?.turnStage==='deploy');
+ const reserve=a.latest.game.reinforcements[aid],home=a.latest.game.tiles.find(t=>t.owner===aid);
+ assert.ok(reserve>=2);assert.equal((await emit(a,'game:action',{type:'end'})).ok,false);
+ assert.equal((await emit(a,'game:action',{type:'deploy',tile:home.id,count:1})).ok,true);
+ await waitFor(a,s=>s?.game?.reinforcements[aid]===reserve-1);
+ assert.equal(a.latest.game.turnStage,'deploy');
+ assert.equal((await emit(a,'game:action',{type:'deploy',tile:home.id,count:reserve-1})).ok,true);
+ await waitFor(a,s=>s?.game?.turnStage==='orders');
+ assert.equal((await emit(a,'game:action',{type:'end'})).ok,true);
+ // A separate realm confirms bot scheduling resumes after asynchronous roll completion.
+ assert.equal((await emit(a,'room:create',{id:aid,name:'Bot tester'})).ok,true);
+ assert.equal((await emit(a,'room:addBot')).ok,true);
+ assert.equal((await emit(a,'room:start')).ok,true);
+ assert.equal((await emit(a,'draft:pick',{kind:'color',value:'blue'})).ok,true);
+ await waitFor(a,s=>s?.game?.phase==='draft'&&s.game.draftStage==='spawn'&&s.game.draftIndex===1);
+ const homeland=a.latest.game.spawnChoices[0];
+ assert.equal((await emit(a,'draft:pick',{kind:'spawn',value:homeland})).ok,true);
+ assert.equal((await emit(a,'game:action',{type:'roll'})).ok,true);
+ await waitFor(a,s=>s?.game?.turnStage==='orders');
+ assert.equal((await emit(a,'game:action',{type:'end'})).ok,true);
+ await waitFor(a,s=>s?.game?.round===2&&s.game.turn===0&&s.game.turnStage==='roll');
+ assert.ok(a.latest.game.scores[a.latest.players[1].id]>=3);
+ assert.equal((await emit(a,'game:action',{type:'roll'})).ok,true);
+ await waitFor(a,s=>s?.game?.round===2&&s.game.turnStage==='deploy');
+ const all=a.latest.game.reinforcements[aid],target=a.latest.game.tiles.find(t=>t.owner===aid);
+ assert.equal((await emit(a,'game:action',{type:'deploy',tile:target.id,count:all})).ok,true);
+ assert.equal((await emit(a,'game:action',{type:'end'})).ok,true);
+ // Bot now has income to place before moving, and still reaches its next turn boundary.
+ await waitFor(a,s=>s?.game?.round===3&&s.game.turn===0&&s.game.turnStage==='roll');
+});

@@ -1,98 +1,116 @@
-# RISKAGON — The Frontier Update (v0.2)
+# Riskagon — The Board & Reinforcements Update (v0.3)
 
-Riskagon is an original browser-based multiplayer hex strategy game that combines territory warfare, provincial development and resource dice. Its isometric 3D world uses Three.js, a Socket.IO authoritative multiplayer server and real Cannon-es physics dice.
+A browser multiplayer hex strategy game with a Three.js isometric board, a Socket.IO authoritative server, terrain physics dice, provincial development and Risk-style battles.
 
-## Open the updated build in GitHub Codespaces
+## Run in GitHub Codespaces
 
-For an **existing Codespace**, pull the latest commit before starting:
+In an existing Codespace, pull this update, then install dependencies and start:
 
-```bash
+```sh
 git pull origin main
-npm install
+npm ci
 npm run assets:sync
 npm run dev
 ```
 
-For a **new Codespace**: Code → Codespaces → Create codespace on `main`; dependencies and 22 free KayKit assets install through `postCreateCommand`. Then run `npm run dev`. Open forwarded port **3000**. Set that port's visibility to **Public** if friends outside the repository need access to the match; do not expose sensitive classroom/personal information, as rooms presently lack authentication.
+For a new Codespace, create one on `main`. The devcontainer installs dependencies and the optional CC0 KayKit assets. Open forwarded port **3000**. Friends need a publicly forwarded port to connect. Procedural scenery and troops work without downloading the asset pack.
 
-```bash
+```sh
 npm test
 npm run build
+npm start
 ```
 
-## How to play
+`npm start` serves the production build; `npm run dev` serves the live development version.
 
-1. **Create a realm**, share its link, add one or more AI kingdoms if you want to play without friends.
-2. **Draft a banner** in player order (blue/red/green/yellow), then **draft starting homelands** in reverse order. All homelands start with **3 troops, 1 outpost, 1 wood/brick/wheat/sheep and 0 ore**.
-3. At the start of your turn, **drag one of the 3D dice and release it into the rolling tray**, which has gravity, collision walls and angular momentum. Both the client and server simulate rigid-body throws. The server includes the direction and speed of your throw, adds secret random initial rotations, then reads the uppermost physical face to authoritatively determine the result; the client settles its animation to those trusted faces. The button underneath is an accessible keyboard/touch fallback.
-4. Provincial resources produce **only** when their dice number is rolled. Upgrade buildings in that province to produce more resources, fortify defenses, gain troops, or accumulate movement.
-5. **Click an owned hex** to zoom in and open its building catalog. **Build Road** highlights shared border edges in gold: click the desired edge, not the center of a tile. Roads cost 1 wood + 1 brick and halve the cost of crossing that border.
-6. Choose **March / Attack** from an occupied hex, then click an adjacent destination. Armies must leave at least one garrison at the source. Combat uses attacker-versus-defender dice with ties awarded to defenders, and battle rolls are visualized with the physics dice.
-7. **Deploy free reinforcements** at an outpost or settlement, starting in **round 2**: 2 units per kingdom per turn. The first round has zero free reinforcements, so players cannot rush with a nine-unit opening army. The first to **32 victory points** wins.
+## Turn flow
 
-## Fog of war
+1. Create a realm, invite friends or add AI opponents. Draft unique banner colors, then starting locations in reverse order. Every kingdom begins with three troops and an outpost.
+2. **Roll:** Grab either large die directly on the hex board, hold, drag and release. The keyboard-accessible **Roll dice** button throws them too. The server clamps the throw inputs, adds secret random orientation/spin, simulates rigid bodies, and records transforms at 30 fps from a 120 Hz simulation. Every client replays those same transforms in the board scene. The upward physical faces determine the result; no client result snap or second simulation is used. Turn actions remain locked until the final frame.
+3. **Reinforce:** Place every troop in the reserve on your occupied land or a land structure. Split the pool across territories, or use **Place all**. Movement, attacks, construction and ending the turn remain locked until the pool is empty.
+4. **Orders:** Select a province to inspect it, march/attack, or explicitly open its build recipes. Roads highlight available shared edges in gold. Leave at least one soldier behind when marching. Roads halve movement cost and improve attacks. You get two movement points, plus any stored mobility.
+5. End your turn. The first kingdom to **32 victory points** wins.
 
-- The **resource type of every tile stays visible** so players can plan long-term territory expansion. Unscouted tiles use a larger natural prop scale.
-- A province becomes **scouted** within **one hex** of your troops/outposts. The terrain props shrink to leave room for troops and buildings, including neighboring rivals.
-- An upgraded owned province or completed road extends your scouting radius to **two hexes**.
-- A tile's **production number** is revealed within **five hexes** of your troops/outposts.
-- Far-away rival ownership, army counts, buildings and other players' inventories are sanitized on the server rather than merely hidden in CSS. Team colors and the public victory-point scoreboard remain visible.
+The opening round awards **zero reinforcement troops**, including matching-roll bonuses, so all players get a turn before troop income begins. Matching resource rolls still benefit all province owners. Matching troop output is banked for every owner. Bonuses earned on other players' rolls join that owner's next reinforcement pool; troops never appear automatically on the board during someone else's turn.
 
-## Province buildings
+## Reinforcement economy
 
-A new province has no building. Construct an **outpost** before you can upgrade it or deploy troops there. Every outpost supports up to **four additional upgrades**. Upgrades trigger when that province's number is rolled.
+From round two, the start-of-turn pool is:
 
-| Construction | Cost | Effect when number is rolled |
+| Source | Troops |
+| --- | ---: |
+| Every two owned, occupied wood tiles | +1 |
+| Every two owned, occupied brick tiles | +1 |
+| Every two owned, occupied wheat tiles | +1 |
+| Every two owned, occupied sheep tiles | +1 |
+| Every two owned, occupied ore tiles | +1 |
+| Each outpost | +2 |
+| Each settlement | +3 |
+| Each barracks | +3 |
+| Each owned resource tile matching any production roll | Its structure troop output again |
+
+Resource pairs are rounded down **separately for each resource**. Occupied means at least one soldier; empty claims and water do not form resource pairs. Structures earn their output even without a garrison. An outpost upgrades into a settlement: its base output changes from two to three, rather than adding both. A **settlement + barracks produces six troops per turn**, plus **six more** each time its number matches a production roll. Bare occupied tiles contribute resource pairs, but have zero structure production on a matching roll.
+
+Troops all enter the reserve instead of being inserted automatically into barracks. This is a deliberate balance interpretation of the requested troop production. The income disclosure shows territory pairs, structures and rolled production (including banked bonuses from rivals’ turns).
+
+## Terrain dice physics
+
+- **Mountains:** Solid, permanent rock cones and high-restitution contact knock dice back. The small physical rocks remain visible when optional mountain scenery condenses under fog rules.
+- **Forest:** High friction and ground-level drag slow dice.
+- **Clay hills:** Sticky, high-friction, zero-restitution contact and stronger drag.
+- **Fields:** Neutral ground with ordinary bouncing and no terrain drag.
+- **Pasture/desert:** Mild ground friction.
+- **River/lake:** Buoyancy balances gravity at the waterline; drag and righting torque let dice float and settle with a readable upward face.
+
+A thick, continuous floor catches bottom seams. Tall, overlapping static colliders follow all 66 exposed sides of the radius-five board, including the near/bottom edge. Visible low rails mark that perimeter. Collider positions and render positions share the same axial geometry. Cocked dice receive physical hops, never a prescribed outcome. A rare throw that cannot settle within the simulation limit is rejected so the player can retry without consuming the roll. Combat retries cocked simulations internally.
+
+Troops, buildings and decorative forest/clay props are not rigid-body obstacles. Mountain collision rocks are fixed independently of fog and optional assets so physics cannot reveal concealed enemy structures. The authoritative simulation runs synchronously on the server; large numbers of simultaneous rooms would benefit from worker threads and replay payload compression.
+
+## Minimalist board controls
+
+The board fills the game area. Turn instructions and current actions appear in a compact overlay inside the map. Build menus only appear after selecting **Build…** during Orders. Deployment shows troop placement controls instead. No permanent side-panel catalog, treasury or event log crowds the board.
+
+**Kingdom & treasury** toggles scores, resources and the expandable chronicles/battle summary. **My kingdom** focuses your homeland; **View realm** resets the camera. Keyboard buttons provide alternatives to grabbing dice and clicking draft locations. Hex movement and placement still use the pointer-based 3D board.
+
+## Province construction
+
+Build an outpost before adding upgrades. An outpost supports four additional upgrades; the settlement conversion does not consume one of those slots. Settlement conversion adds a victory point. Captured buildings are retained except walls.
+
+| Construction | Cost | Effect |
 | --- | --- | --- |
-| Outpost | 1 wood, 1 brick | Enables construction and deployment |
-| Homes | 2 wood, 1 brick, 1 wheat | +1 native resource |
-| Walls | 2 brick, 1 ore | Store +1 defense charge (max 3); permanent defensive bonus while standing |
-| Armory | 2 ore, 1 brick | Store +1 attacker bonus (max 3) |
-| Farm (fields) | 2 wood, 1 wheat | +2 wheat |
-| Lumberyard (forest) | 1 wood, 1 brick | +2 wood |
-| Quarry (hills) | 1 wood, 2 brick | +2 brick |
-| Mine (mountains) | 2 wood, 1 ore | +2 ore |
-| Ranch (pasture) | 1 wood, 2 sheep | +2 sheep |
-| Barracks | 2 wood, 2 brick, 1 ore | +2 troops on that tile |
-| Stables | 2 wood, 2 wheat, 1 sheep | Store +1 movement point (max 2) |
-| Bridge (river tile) | 2 wood, 1 brick, 1 ore | Allows land armies to cross the bridged river hex |
+| Outpost | 1 wood, 1 brick | +2 troops/turn, enables upgrades and deployment |
+| Settlement | 2 wood, 2 brick, 2 wheat, 1 sheep | Upgrade outpost base to +3 troops/turn |
+| Homes | 2 wood, 1 brick, 1 wheat | +1 native resource on matching roll |
+| Walls | 2 brick, 1 ore | Defense bonus; matching roll stores a defense charge (max 3) |
+| Armory | 2 ore, 1 brick | Matching roll stores an attack bonus (max 3) |
+| Farm | 2 wood, 1 wheat | Fields only; +2 wheat on matching roll |
+| Lumberyard | 1 wood, 1 brick | Forest only; +2 wood on matching roll |
+| Quarry | 1 wood, 2 brick | Hills only; +2 brick on matching roll |
+| Mine | 2 wood, 1 ore | Mountains only; +2 ore on matching roll |
+| Ranch | 1 wood, 2 sheep | Pasture only; +2 sheep on matching roll |
+| Barracks | 2 wood, 2 brick, 1 ore | +3 troops/turn and +3 matching tile production |
+| Stables | 2 wood, 2 wheat, 1 sheep | Matching roll stores one movement point (max 2) |
+| Road | 1 wood, 1 brick | Shared land edge; halves crossing movement cost |
+| Bridge | 2 wood, 1 brick, 1 ore | Lets its builder cross the river hex |
 
-## What has shipped
+## Fog and assets
 
-- 91-hex map with resource provinces, river and lake water tiles, team drafting, fog of war and large-to-small scenery transitions.
-- 3D KayKit Knight and Rogue character GLBs loaded automatically from the official CC0 Adventurers repository, with original procedural soldiers, archers, and cavalry as fallbacks. Larger multi-unit stacks also use the Barbarian GLB.
-- 3D dice rigid bodies with interactive click/hold/drag/release, collision walls, physics bounces, and server-authoritative turn/combat rolls.
-- River bridge construction and crossing rules. Lake hexes block land troops.
-- Responsive kingdom controls and zoomed construction view, realtime turn log, multiplayer rooms and basic AI.
-- Server-side action validation and tests for draft order, privacy, reinforcements, bridges and resource buildings.
+The 91-hex board contains clumped resource provinces, rivers and lakes. Terrain types remain public. Unscouted resource scenery stays large; within one hex of troops/outposts it condenses. Upgraded provinces and owned roads extend scouting to two hexes. Production numbers appear within five hexes. The server masks remote ownership, troop counts, structures, rival resources, reserves and income breakdowns.
 
-## Planned water/navy system (not yet playable)
+Optional models come from [KayKit Medieval Hexagon](https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0) and [KayKit Adventurers](https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0), both CC0. Original procedural scenery and infantry, archers and cavalry are bundled as fallbacks. See `ASSETS.md` for the art pipeline.
 
-Lakes are blocked to land troops. The next phase will introduce:
+## Validation and project layout
 
-1. **Shipyards** built on an owned coastal outpost adjoining a lake; these create a separate naval troop reserve on matching dice rolls.
-2. **Naval movement** between neighboring lake hexes, with ships retaining a water-only path.
-3. **Docks** built on the bank of a controlled lake tile, creating legal landing points for amphibious assaults.
-4. **Transport capacity and amphibious combat**, with units embarked onto ships and landed at docking sites.
-5. **River crossings** already work through bridge construction in this release; later versions can add an alternate ferry option.
+`npm test` covers drafting, fog, shared-edge roads, bridges, production math, settlement upgrades, split placement, action locks, roll timing/idempotency, final-face/replay agreement, perimeter containment, buoyancy and terrain effects. The Socket.IO smoke test starts an isolated production server and plays two human clients through drafting, rolls, reinforcements and turn changes; it also checks a bot turn and reconnect replay.
 
-These mechanics will be server-validated rather than simulated solely in the browser.
+- `shared/boardGeometry.js`: shared hex coordinates, edge/rock geometry and terrain profiles.
+- `server/dicePhysics.js`: authoritative rigid-body simulation, recording and face detection.
+- `server/realm.js`: game state, drafting, fog, reinforcement economy and action validation.
+- `server/index.js`: rooms, roll completion timers, bots and realtime state delivery.
+- `src/board.js`: Three.js map, troops, buildings, edge markers and perimeter rails.
+- `src/dice.js`: in-board grab/throw input and authoritative replay interpolation.
+- `src/main.js`, `src/style.css`: contextual turn controls and toggled HUD.
 
-## Project files
+## Remaining prototype limits
 
-- `server/realm.js`: new 91-hex game model, drafting, fog, economy, combat and water crossing rules.
-- `server/dicePhysics.js`: authoritative cannon-es collision simulation, throw input clamping, and face detection.
-- `server/index.js`: Express / Socket.IO room and bot orchestration.
-- `server/realm.test.js`: new rules tests.
-- `src/board.js`: large 3D hex board, roads, river bridges, fog and province structures.
-- `src/troops.js`: original infantry, archer and cavalry meshes (no asset dependency).
-- `src/dice.js`: Cannon-es rigid body dice, visible pips, grab/throw/replay.
-- `src/main.js`, `src/style.css`: multiplayer UI and building menus.
-- `scripts/sync-kaykit.mjs`: KayKit CC0 texture/model asset sync; generated files are ignored from Git.
-- `ASSETS.md`: research and longer-term licensed art pipeline.
-
-## Licensing & prototype limitations
-
-The included asset importer uses [KayKit Medieval Hexagon](https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0) (CC0-1.0). The official [KayKit Adventurers](https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0) Knight, Rogue, and Barbarian GLBs are also CC0-1.0, and their license is copied during asset sync. Offline procedural troop geometry stays available. [KayKit Adventurers](https://kaylousberg.itch.io/kaykit-adventurers) is already the 3D troop model source; full rigged animation blending remains a follow-up.
-
-**Important limitations**: No permanent saved matches, account authentication, spectator mode, trading market, navy/shipyards, or full visual asset optimization yet. The dice use rigid-body physics on both client and server. Your throw direction influences the server simulation, while secret randomized spin/orientation keeps rolls unpredictable and prevents clients from simply submitting a desired face. The dice are currently confined to the physical inset rolling tray; dragging across the entire hex map is not yet implemented.
+Matches live in server memory and disappear on restart. Rooms have no account authentication, reconnect identity is only a session token, and the AI remains basic. Navy/shipyards/docks, trading and animated troop movement are not implemented; lakes block land armies, while bridges already unlock rivers. Combat remains server-resolved with numerical battle summaries rather than per-round physical replay on the map. Optional artwork is downloaded separately; full asset optimization and animation blending remain future work.
