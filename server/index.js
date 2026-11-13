@@ -3,7 +3,7 @@ import express from 'express';
 import {createServer} from 'node:http';
 import {Server} from 'socket.io';
 import {randomBytes} from 'node:crypto';
-import {newRealm,currentDrafter,chooseDraft,perform,forPlayer,adjacent,dist,COLORS} from './realm.js';
+import {newRealm,currentDrafter,chooseDraft,perform,finishRoll,forPlayer,adjacent,dist,COLORS} from './realm.js';
 const app=express(),server=createServer(app),io=new Server(server,{maxHttpBufferSize:100_000});
 const rooms=new Map();
 const clean=x=>typeof x==='string'?x.trim().replace(/[<>]/g,'').slice(0,32):'';
@@ -14,6 +14,13 @@ const send=room=>{
 const code=()=>{let id;do{id=randomBytes(3).toString('hex').toUpperCase();}while(rooms.has(id));return id;};
 function advance(room){
  send(room);
+ if(room.game?.turnStage==='rolling'){
+  if(!room.rollTimer)room.rollTimer=setTimeout(()=>{
+   room.rollTimer=null;
+   finishRoll(room);advance(room);
+  },Math.max(1,room.game.lastRoll.readyAt-Date.now()));
+  return;
+ }
  scheduleBot(room);
 }
 function scheduleBot(room){
@@ -38,9 +45,9 @@ function scheduleBot(room){
      })[0];
     chooseDraft(room,id,now.draftStage,value);
    }else if(now.phase==='playing'){
-    perform(room,id,{type:'roll'});
+    if(!now.rolled){perform(room,id,{type:'roll'});advance(room);return;}
     if((now.reinforcements[id]||0)>0){
-     const home=now.tiles.find(t=>t.owner===id&&t.building);
+     const home=now.tiles.find(t=>t.owner===id&&(t.army>0||t.building)&&!['lake','river'].includes(t.terrain));
      if(home)perform(room,id,{type:'deploy',tile:home.id,count:now.reinforcements[id]});
     }
     const move=now.tiles.filter(t=>t.owner===id&&t.army>1)
@@ -53,7 +60,7 @@ function scheduleBot(room){
   advance(room);
  },650);
 }
-app.get('/api/health',(_req,res)=>res.json({ok:true,rooms:rooms.size,app:'riskagon',version:'0.2.0'}));
+app.get('/api/health',(_req,res)=>res.json({ok:true,rooms:rooms.size,app:'riskagon',version:'0.3.0'}));
 io.on('connection',socket=>{
  socket.on('room:create',({id,name}={},reply=()=>{})=>{
   id=clean(id);name=clean(name)||'Commander';
@@ -125,5 +132,5 @@ if(process.env.NODE_ENV==='production'){
  const vite=await createVite({server:{middlewareMode:true},appType:'spa'});
  app.use(vite.middlewares);
 }
-const port=Number(process.env.PORT)||3000;
-server.listen(port,'0.0.0.0',()=>console.log('Riskagon v0.2 at http://localhost:'+port));
+const port=process.env.PORT===undefined?3000:Number(process.env.PORT);
+server.listen(port,'0.0.0.0',()=>console.log('Riskagon v0.3 at http://localhost:'+server.address().port));

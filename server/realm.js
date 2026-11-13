@@ -1,12 +1,12 @@
 
 import {randomInt} from 'node:crypto';
-import {rollPhysics} from './dicePhysics.js';
+import {rollPhysics,simulateRoll} from './dicePhysics.js';
 export const COLORS=['blue','red','green','yellow'];
 export const RESOURCES=['wood','brick','wheat','sheep','ore'];
 export const RADIUS=5;
 export const TARGET_POINTS=32;
 export const COSTS={
- road:{wood:1,brick:1},outpost:{wood:1,brick:1},
+ road:{wood:1,brick:1},outpost:{wood:1,brick:1},settlement:{wood:2,brick:2,wheat:2,sheep:1},
  homes:{wood:2,brick:1,wheat:1},
  walls:{brick:2,ore:1},
  armory:{ore:2,brick:1},
@@ -67,7 +67,7 @@ export function generateMap(){
 }
 const choices=()=>['-5,0','5,0','0,-5','0,5','-5,5','5,-5','-3,-2','3,2'];
 export function newRealm(players){
- return {phase:'draft',draftStage:'color',draftOrder:players.map(p=>p.id),draftIndex:0,spawnChoices:choices(),tiles:generateMap(),roads:{},turn:0,round:1,rolled:false,lastRoll:null,lastBattle:null,mobilityUsed:0,reinforcements:{},pendingDice:null,winner:null,log:['Color draft is open. Choose a banner.']};
+ return {phase:'draft',draftStage:'color',draftOrder:players.map(p=>p.id),draftIndex:0,spawnChoices:choices(),tiles:generateMap(),roads:{},turn:0,round:1,rolled:false,turnStage:'roll',lastRoll:null,lastBattle:null,mobilityUsed:0,reinforcements:{},productionReserve:{},pendingDice:null,winner:null,log:['Color draft is open. Choose a banner.']};
 }
 export function currentDrafter(room){
  const g=room.game;if(!g||g.phase!=='draft')return null;
@@ -97,7 +97,7 @@ export function chooseDraft(room,id,kind,value){
   g.draftStage='spawn';g.draftIndex=0;
   g.log.unshift('Starting location draft is open, in reverse order.');
  }else if(g.draftStage==='spawn'&&g.draftIndex>=room.players.length){
-  g.phase='playing';g.turn=0;g.round=1;g.rolled=false;
+  g.phase='playing';g.turn=0;g.round=1;g.rolled=false;g.turnStage='roll';
   g.mobilityUsed=0;g.log.unshift('The frontier opens. Every kingdom starts with 3 troops.');
   for(const x of room.players)g.reinforcements[x.id]=0;
  }
@@ -121,44 +121,75 @@ function diceBattle(aCount,dCount,bonusA=0,bonusD=0){
  }
  return {attackers:a,defenders:d,rounds};
 }
+// Outposts upgrade into settlements: their base outputs replace, rather than stack.
+export const troopOutput=tile=>(tile.building>=2?3:tile.building===1?2:0)+(tile.structures.includes('barracks')?3:0);
+export function reinforcementIncome(g,id,sum){
+ const owned=g.tiles.filter(t=>t.owner===id);
+ const occupied=Object.fromEntries(RESOURCES.map(r=>[r,0]));
+ for(const t of owned)if(t.army>0&&RESOURCE_TERRAIN[t.terrain])occupied[RESOURCE_TERRAIN[t.terrain]]++;
+ const pairs=Object.fromEntries(Object.entries(occupied).map(([r,n])=>[r,Math.floor(n/2)]));
+ const territory=Object.values(pairs).reduce((a,b)=>a+b,0);
+ const structures=owned.reduce((n,t)=>n+troopOutput(t),0);
+ const production=owned.filter(t=>t.number===sum&&RESOURCE_TERRAIN[t.terrain]).reduce((n,t)=>n+troopOutput(t),0);
+ // Protect the opening round; production is delayed too, so nobody starts with a rush army.
+ const opening=g.round===1;
+ return {pairs,territory:opening?0:territory,structures:opening?0:structures,production:opening?0:production,opening,
+  total:opening?0:territory+structures+production};
+}
+export function finishRoll(room,now=Date.now()){
+ const g=room.game;
+ if(g?.turnStage!=='rolling'||now<g.lastRoll.readyAt)return false;
+ const p=room.players[g.turn],sum=g.lastRoll.sum;
+ for(const tile of g.tiles){
+  if(tile.number!==sum||!tile.owner)continue;
+  const owner=room.players.find(x=>x.id===tile.owner),resource=RESOURCE_TERRAIN[tile.terrain];
+  if(resource&&owner){
+   const count=1+(tile.structures.includes('homes')?1:0)+(tile.structures.includes(RESOURCE_STRUCTURE[tile.terrain])?2:0);
+   owner.resources[resource]=(owner.resources[resource]||0)+count;
+  }
+  if(g.round>1&&owner&&resource)g.productionReserve[owner.id]=(g.productionReserve[owner.id]||0)+troopOutput(tile);
+  if(tile.structures.includes('walls'))tile.ward=Math.min(3,tile.ward+1);
+  if(tile.structures.includes('armory'))tile.attackStock=Math.min(3,tile.attackStock+1);
+  if(tile.structures.includes('stables')&&owner)owner.storedMobility=Math.min(2,(owner.storedMobility||0)+1);
+ }
+ g.income=reinforcementIncome(g,p.id,null);
+ g.income.production=g.productionReserve[p.id]||0;
+ g.income.total+=g.income.production;
+ g.productionReserve[p.id]=0;
+ // A conquered kingdom with only bridge hexes cannot get trapped with an unusable reserve.
+ const canDeploy=g.tiles.some(t=>t.owner===p.id&&(t.army>0||t.building)&&RESOURCE_TERRAIN[t.terrain]);
+ g.reinforcements[p.id]=canDeploy?g.income.total:0;
+ g.turnStage=g.reinforcements[p.id]>0?'deploy':'orders';
+ g.log.unshift(p.name+' rolled '+g.lastRoll.dice.join(' + ')+' = '+sum+'. '+g.reinforcements[p.id]+' troops to place.');
+ g.log=g.log.slice(0,20);
+ return true;
+}
 export function perform(room,id,action){
  const g=room.game,p=room.players.find(x=>x.id===id);
  if(g?.phase!=='playing')throw Error('The match is not currently playing.');
  if(!p||room.players[g.turn].id!==id)throw Error('Not your turn.');
  const t=action?.type;
  if(t==='roll'){
-  if(g.rolled)throw Error('Already rolled this turn.');
-  // Server physically simulates the throw and reads the two uppermost faces.
-  const d=rollPhysics(2,action.throw),sum=d[0]+d[1];
-  g.rolled=true;g.lastRoll={dice:d,sum};
-  for(const tile of g.tiles){
-   if(tile.number!==sum||!tile.owner)continue;
-   const owner=room.players.find(x=>x.id===tile.owner);
-   const resource=RESOURCE_TERRAIN[tile.terrain];
-   if(resource){
-    let count=1+(tile.structures.includes('homes')?1:0);
-    if(tile.structures.includes(RESOURCE_STRUCTURE[tile.terrain]))count+=2;
-    owner.resources[resource]=(owner.resources[resource]||0)+count;
-   }
-   if(tile.structures.includes('walls'))tile.ward=Math.min(3,tile.ward+1);
-   if(tile.structures.includes('armory'))tile.attackStock=Math.min(3,tile.attackStock+1);
-   if(tile.structures.includes('barracks'))tile.army+=2;
-   if(tile.structures.includes('stables'))owner.storedMobility=Math.min(2,(owner.storedMobility||0)+1);
-  }
-  g.log.unshift(p.name+' rolled '+d.join(' + ')+' = '+sum+'. Provinces produced.');
+  if(g.rolled||g.turnStage!=='roll')throw Error('Already rolled this turn.');
+  const roll=simulateRoll(2,action.throw,g.tiles);
+  g.rolled=true;g.turnStage='rolling';g.lastRoll=roll;
+  g.lastRoll.startedAt=Date.now();
+  g.lastRoll.readyAt=g.lastRoll.startedAt+roll.durationMs;
  }else if(t==='end'){
   if(!g.rolled)throw Error('Roll the dice before ending your turn.');
+  if(g.turnStage!=='orders')throw Error('Finish rolling and place all reinforcements before ending your turn.');
   g.turn=(g.turn+1)%room.players.length;if(g.turn===0)g.round++;
-  g.rolled=false;g.lastRoll=null;g.lastBattle=null;
+  g.rolled=false;g.turnStage='roll';g.lastRoll=null;g.lastBattle=null;g.income=null;
   g.mobilityUsed=0;
   const next=room.players[g.turn];
   g.mobilityCap=2+Math.min(2,next.storedMobility||0);
   next.storedMobility=0;
-  // No free reinforcements at all until everyone has played once.
-  g.reinforcements[next.id]=g.round>1?2:0;
+  g.reinforcements[next.id]=0;
   g.log.unshift('Round '+g.round+': '+next.name+' prepares their orders.');
  }else{
   if(!g.rolled)throw Error('Roll your physical dice before taking actions.');
+  if(g.turnStage==='rolling')throw Error('Wait for the dice to settle.');
+  if(t!=='deploy'&&g.turnStage!=='orders')throw Error('Place all reinforcements before movement, combat or building.');
   if(t==='road'){
    const pieces=String(action.edge||'').split('|');
    if(pieces.length!==2||edgeId(...pieces)!==action.edge)throw Error('Invalid road edge.');
@@ -179,21 +210,25 @@ export function perform(room,id,action){
    if(!tile||tile.owner!==id)throw Error('Build on your territory.');
    if(!COSTS[kind]||['road','bridge'].includes(kind))throw Error('Unknown structure.');
    if(tile.structures.includes(kind))throw Error('Structure is already built.');
+   if(kind==='settlement'&&tile.building!==1)throw Error('Upgrade an outpost to a settlement.');
    if(kind==='outpost'){
     if(tile.building)throw Error('Outpost already exists.');
    }else{
     if(!tile.building)throw Error('Build an outpost first.');
-    if(tile.structures.length>=5)throw Error('This settlement has reached its five-building limit.');
+    if(tile.structures.filter(x=>x!=='settlement').length>=5&&kind!=='settlement')throw Error('This settlement has reached its five-building limit.');
     if(['farm','lumberyard','quarry','mine','ranch'].includes(kind)&&RESOURCE_STRUCTURE[tile.terrain]!==kind)throw Error('This industry does not match the terrain.');
    }
    pay(p,COSTS[kind]);tile.structures.push(kind);
    if(kind==='outpost')tile.building=1;
+   if(kind==='settlement')tile.building=2;
    g.log.unshift(p.name+' constructed '+kind+' in '+tile.terrain+'.');
   }else if(t==='deploy'){
    const tile=tileAt(g,action.tile),count=action.count;
-   if(!tile||tile.owner!==id||!tile.building)throw Error('Deploy from an owned outpost or settlement.');
+   if(g.turnStage!=='deploy')throw Error('Not enough reinforcements remaining; deployment is only at the start of a turn.');
+   if(!tile||tile.owner!==id||(!tile.army&&!tile.building)||['lake','river'].includes(tile.terrain))throw Error('Deploy on an owned occupied land tile or structure.');
    if(!Number.isSafeInteger(count)||count<1||(g.reinforcements[id]||0)<count)throw Error('Not enough reinforcements remaining.');
    tile.army+=count;g.reinforcements[id]-=count;
+   if(g.reinforcements[id]===0)g.turnStage='orders';
    g.log.unshift(p.name+' deployed '+count+' free reinforcements.');
   }else if(t==='march'){
    const from=tileAt(g,action.from),to=tileAt(g,action.to),count=action.amount;
@@ -205,6 +240,7 @@ export function perform(room,id,action){
    const road=g.roads[edgeId(from.id,to.id)]===id;
    const mobilityCost=road?0.5:1;
    if(g.mobilityUsed+mobilityCost>(g.mobilityCap||2))throw Error('No movement points left.');
+   const battle=to.owner&&to.owner!==id?diceBattle(count,to.army,(road?1:0)+(from.attackStock>0?1:0),(to.structures.includes('walls')?1:0)+(to.ward>0?1:0)):null;
    g.mobilityUsed+=mobilityCost;g.lastBattle=null;
    if(to.owner===id){from.army-=count;to.army+=count;g.log.unshift(p.name+' moved '+count+' soldiers.');}
    else if(!to.owner){
@@ -212,16 +248,13 @@ export function perform(room,id,action){
     g.log.unshift(p.name+' occupied an unclaimed hex.');
    }else{
     const enemy=room.players.find(x=>x.id===to.owner);
-    const defBonus=(to.structures.includes('walls')?1:0)+(to.ward>0?1:0);
-    const attackBonus=(road?1:0)+(from.attackStock>0?1:0);
     if(to.ward>0)to.ward--;if(from.attackStock>0)from.attackStock--;
-    const battle=diceBattle(count,to.army,attackBonus,defBonus);
     g.lastBattle={attacker:p.name,defender:enemy.name,rounds:battle.rounds,source:from.id,target:to.id,result:battle.defenders===0?'conquered':'held'};
     from.army-=(count-battle.attackers);
     if(battle.defenders===0&&battle.attackers>0){
      from.army-=battle.attackers;to.owner=id;to.army=battle.attackers;
      to.structures=to.structures.filter(x=>x!=='walls');to.ward=0;to.attackStock=0;
-     to.building=to.structures.includes('outpost')?1:0;
+     to.building=to.structures.includes('settlement')?2:to.structures.includes('outpost')?1:0;
      g.log.unshift(p.name+' conquered '+enemy.name+"'s territory!");
     }else{
      to.army=battle.defenders;
@@ -261,7 +294,7 @@ export function forPlayer(room,id){
   const ids=edge.split('|');
   if(owner===id||ids.some(x=>view.visible.has(x)))roads[edge]=owner;
  }
- return {code:room.code,host:room.host,players,game:{...g,tiles,roads,scores:Object.fromEntries(room.players.map(x=>[x.id,points(g,x.id)])),
+ return {code:room.code,host:room.host,players,game:{...g,tiles,roads,serverNow:Date.now(),reinforcements:{[id]:g.reinforcements[id]||0},productionReserve:{[id]:g.productionReserve[id]||0},income:room.players[g.turn]?.id===id?g.income:null,scores:Object.fromEntries(room.players.map(x=>[x.id,points(g,x.id)])),
    lastBattle:g.lastBattle&&(g.lastBattle.attacker===players.find(p=>p.id===id)?.name||g.lastBattle.defender===players.find(p=>p.id===id)?.name)?g.lastBattle:null,
    spawnChoices:g.phase==='draft'?g.spawnChoices:[],draftOrder:g.phase==='draft'?g.draftOrder:[]}};
 }

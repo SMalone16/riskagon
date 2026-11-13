@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {boundaryEdges,mountainRocks} from '../shared/boardGeometry.js';
 import {makeTroop} from './troops.js';
 import {clone as cloneSkinned} from 'three/addons/utils/SkeletonUtils.js';
 
@@ -179,7 +180,7 @@ export class Board{
   const version=this.version;
   this.prefab(relative).then(model=>{
    if(!model||version!==this.version)return;
-   holder.clear();model.scale.setScalar(scale);holder.add(model);
+   model.traverse(o=>o.userData.prefab=true);holder.clear();model.scale.setScalar(scale);holder.add(model);
   });
  }
  focus(id){
@@ -204,7 +205,7 @@ export class Board{
    const bounds=new THREE.Box3().setFromObject(model),height=bounds.getSize(new THREE.Vector3()).y;
    if(!height||!Number.isFinite(height))return;
    const scale=desiredHeight/height;
-   holder.clear();model.scale.setScalar(scale);
+   model.traverse(o=>o.userData.prefab=true);holder.clear();model.scale.setScalar(scale);
    model.position.y=-bounds.min.y*scale;
    model.traverse(object=>{if(object.isMesh){object.castShadow=true;object.receiveShadow=true;}});
    holder.add(model);
@@ -215,9 +216,22 @@ export class Board{
  }
  update(tiles=[],options={}){
   this.version++;this.tiles=tiles;this.options=options;
+  // Dispose rebuilt procedural geometry/materials; cached prefab resources are shared.
+  this.board.traverse(object=>{
+   if(object.userData.prefab)return;
+   object.geometry?.dispose();
+   const materials=Array.isArray(object.material)?object.material:[object.material];
+   materials.filter(Boolean).forEach(material=>{material.map?.dispose();material.dispose();});
+  });
   this.board.clear();this.pickables=[];
   const selected=options.selected,roadMode=options.roadMode;
-  const tilesById=new Map(tiles.map(t=>[t.id,t]));
+  for(const edge of boundaryEdges(tiles)){
+   const rail=mesh(new THREE.BoxGeometry(1.13,.25,.13),makeMat(0x496b63),this.board,edge.x,.28,edge.z);
+   rail.rotation.y=edge.angle;
+  }
+  for(const tile of tiles.filter(t=>t.terrain==='mountains'))for(const rock of mountainRocks(tile)){
+   mesh(new THREE.CylinderGeometry(.01,rock.radius,rock.height,6),makeMat(0x839496),this.board,rock.x,.16+rock.height/2,rock.z);
+  }
   for(const tile of tiles){
    const root=new THREE.Group();root.position.copy(pos(tile));this.board.add(root);
    const colors=TERRAIN[tile.terrain]||TERRAIN.desert;
@@ -315,7 +329,7 @@ export class Board{
     const a=pos(tile),b=pos(other),mid=a.clone().add(b).multiplyScalar(.5);
     const direction=new THREE.Vector3(-(b.z-a.z),0,b.x-a.x).normalize();
     const owner=options.roads?.[edge];
-    const eligible=roadMode&&(tile.owner===options.myId||other.owner===options.myId)&&!['lake','river'].includes(tile.terrain)&&!['lake','river'].includes(other.terrain);
+    const eligible=roadMode&&!owner&&(tile.owner===options.myId||other.owner===options.myId)&&!['lake','river'].includes(tile.terrain)&&!['lake','river'].includes(other.terrain);
     if(!owner&&!eligible)continue;
     const color=owner?(FACTIONS[(options.players||[]).find(p=>p.id===owner)?.color]||0xb38a5e):0xffe09b;
     const road=mesh(new THREE.BoxGeometry(1.13,.10,owner?.21:.13),makeMat(color),this.board,mid.x,.29,mid.z);
@@ -337,6 +351,7 @@ export class Board{
   }
  }
  animate(){
+  this.onFrame?.(performance.now());
   this.controls.update();
   this.renderer.render(this.scene,this.camera);
   this.frame=requestAnimationFrame(()=>this.animate());
