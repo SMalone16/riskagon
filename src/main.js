@@ -105,37 +105,71 @@ function buildPanel(tile){
 }
 function canPay(type){return Object.entries(costs[type]||{}).every(([key,n])=>(me()?.resources?.[key]||0)>=n);}
 function btn(text,action,enabled=true,cls=''){return `<button data-action="${action}" class="${cls}" ${enabled?'':'disabled'}>${text}</button>`;}
+
 function render(){
- const g=state?.game;
- $('#welcome').hidden=!!state;$('#lobby').hidden=!state||!!g;$('#control').hidden=!g;
- $('#mapTitle').textContent=g?(g.phase==='finished'?'A kingdom has risen.':'The war for the frontier.'):(state?'Gather your kingdoms.':'A land worth fighting for.');
- $('#round').textContent=g?'ROUND '+g.round:'19 TERRITORIES';
- $('#turn').textContent=g?(g.phase==='finished'?'CONQUEST COMPLETE':isActive()?'YOUR TURN':'WAITING FOR '+state.players[g.turn].name.toUpperCase()):'ROLL · BUILD · CONQUER';
- $('#mapGuide').textContent=roadMode?'CLICK AN EDGE TO BUILD A ROAD':marchFrom?'CLICK AN ADJACENT HEX TO MARCH':'DRAG TO ORBIT · SCROLL TO ZOOM · CLICK A HEX';
+ const g=state?.game,phase=g?.phase;
+ $('#welcome').hidden=!!state;
+ $('#lobby').hidden=!state||!!g;
+ $('#control').hidden=!g;
+ $('#round').textContent=g?'ROUND '+g.round+' · '+g.tiles.length+' HEXES':'91 TERRITORIES';
+ $('#mapTitle').textContent=phase==='draft'?'Choose your banner and homeland.':phase==='finished'?'A kingdom has risen.':g?'The war for the frontier.':state?'Gather your kingdoms.':'A land worth fighting for.';
+ $('#turn').textContent=phase==='draft'?'KINGDOM DRAFT IN PROGRESS':phase==='finished'?'CONQUEST COMPLETE':g?(isActive()?'YOUR TURN':'WAITING FOR '+state.players[g.turn].name.toUpperCase()):'ROLL · BUILD · CONQUER';
+ $('#diceFallback').disabled=!(g&&isActive()&&!g.rolled&&!dice.running);
+ $('#diceHint').textContent=phase==='playing'?(isActive()&&!g.rolled?'YOUR TURN · DRAG TO THROW':g.rolled?'DICE RESOLVED':'AWAITING NEXT TURN'):'THE DICE WILL AWAIT YOUR KINGDOM';
+ $('#diceNote').textContent=g?.lastRoll?'⚄ '+g.lastRoll.dice.join(' + ')+' = '+g.lastRoll.sum:'Drag either die and release over the tray';
+ if(!dice.running)dice.setMode(isActive()&&!g?.rolled?'resource':'idle');
  if(state&&!g){
-  $('#lobby').innerHTML=`<div class="eyebrow">YOUR PRIVATE REALM</div><div class="room-code">${safe(state.code)}</div><p class="hint">Share this code with your friends.</p>${btn('↗ Copy invite link','copy',true,'secondary full')}<div class="eyebrow spaced">COMMANDERS · ${state.players.length}/4</div>${state.players.map(p=>`<div class="lobby-player"><i class="color ${p.color}"></i>${safe(p.name)} ${p.bot?'[AI]':''} ${p.id===state.host?'[HOST]':''}</div>`).join('')}${state.host===id?btn('+ Add AI kingdom','bot',state.players.length<4,'secondary full')+btn('⚔ Begin conquest','start',state.players.length>=2,'primary full'):'<p class="hint">Waiting for the host to begin.</p>'}`;
+  $('#lobby').innerHTML=`<div class="eyebrow">YOUR PRIVATE REALM</div><div class="room-code">${safe(state.code)}</div><p class="hint">Share this code with your friends.</p>${btn('↗ Copy invite link','copy',true,'secondary full')}<div class="eyebrow spaced">COMMANDERS · ${state.players.length}/4</div>${state.players.map(p=>`<div class="lobby-player"><i class="color ${p.color||''}"></i>${safe(p.name)} ${p.bot?'[AI]':''} ${p.id===state.host?'[HOST]':''}</div>`).join('')}${state.host===id?btn('+ Add AI kingdom','bot',state.players.length<4,'secondary full')+btn('⚔ Begin color draft','start',state.players.length>=2,'primary full'):'<p class="hint">Waiting for the host to begin.</p>'}`;
  }
- if(g){
-  const tile=g.tiles.find(t=>t.id===selected),own=tile?.owner===id;
-  const max=own?Math.max(1,tile.army-1):1;amount=Math.min(amount,max);
+ const tile=g?.tiles.find(t=>t.id===selected);
+ if(phase==='draft'){
+  const order=g.draftStage==='color'?g.draftOrder:[...g.draftOrder].reverse();
+  const drafter=order[g.draftIndex],isMine=drafter===id,playerName=state.players.find(p=>p.id===drafter)?.name||'Commander';
+  $('#turn').textContent=isMine?'YOU ARE DRAFTING':'WAITING FOR '+playerName.toUpperCase();
+  $('#control').innerHTML=`<div class="eyebrow">DRAFT · ${g.draftStage==='color'?'ROUND 1: BANNER':'ROUND 2: HOMELAND'}</div><div class="current-player"><span>♛</span><div><small>CURRENT PICK</small><b>${safe(playerName)}</b></div></div>
+  ${g.draftStage==='color'? `<p class="hint">Pick a unique kingdom color. The reverse-order starting-location draft follows.</p><div class="color-draft">${['blue','red','green','yellow'].map(c=>`<button data-color="${c}" ${isMine&&!state.players.some(p=>p.color===c)?'':'disabled'}><i class="color ${c}"></i>${c.toUpperCase()}</button>`).join('')}</div>`:
+  `<p class="hint">Click one of the <strong>glowing golden starting hexes</strong> on the board. The last color chooser gets the first homeland pick.</p><div class="draft-options">${g.spawnChoices.map(x=>`<button data-spawn="${x}" ${isMine?'':'disabled'}>✦ ${x}</button>`).join('')}</div>`}
+  <div class="hint">Each kingdom starts with only 3 troops and no free first-round reinforcements.</div>`;
+  $('#mapGuide').textContent=g.draftStage==='spawn'?'CLICK A GOLDEN STARTING HEX':'DRAFT COLORS FIRST · THEN STARTING LOCATIONS';
+  board.update(g.tiles,{players:state.players,myId:id,spawnChoices:g.draftStage==='spawn'?g.spawnChoices:[]});
+  $('#mapFooter').textContent='✦ All terrain is public. Territory ownership and hidden units depend on scouting.';
+ }else if(g){
+  const own=tile?.owner===id,max=own?Math.max(1,tile.army-1):1;amount=Math.min(amount,max);
   const winner=state.players.find(p=>p.id===g.winner);
-  $('#control').innerHTML=`<div class="eyebrow">ROUND ${g.round} · COMMANDER ${g.turn+1}</div><div class="current-player"><span>♜</span><div><small>CURRENT TURN</small><b>${safe(state.players[g.turn].name)}</b></div></div>${g.phase==='finished'?'<div class="victory">✦ '+safe(winner?.name)+' wins the realm!</div>':`
-  ${btn(g.rolled?'⚄ Rolled '+g.lastRoll:'⚄ Roll to harvest','roll',isActive()&&!g.rolled,'primary full')}
-  <div class="mobility">MOBILITY LEFT <b>${(2-g.mobilityUsed).toFixed(1)} / 2</b></div>
-  <div class="eyebrow spaced">SELECTED TERRITORY</div><div class="selected">${tile?'<b>'+kinds[tile.terrain]+'</b><p>Roll '+(tile.number||'—')+' · '+(tile.owner?state.players.find(x=>x.id===tile.owner)?.name:'Unclaimed')+'<br>'+tile.army+' soldiers · '+(['No structure','Settlement','Fortress'][tile.building])+'</p>':'<p>Click a hexagon to inspect it.</p>'}</div>
-  <div class="eyebrow spaced">DEVELOP & EXPAND</div><div class="action-grid">${btn('⌂ Settlement','settlement',canAct()&&own&&tile.building===0&&canPay('settlement'))}${btn('♜ Fortress','fort',canAct()&&own&&tile.building===1&&canPay('fort'))}${btn('⚔ Recruit +2','recruit',canAct()&&own&&tile.building>0&&canPay('recruit'))}${btn('═ Road mode','road',canAct()&&canPay('road'),roadMode?'chosen':'')}</div>
-  <div class="eyebrow spaced">MILITARY ORDERS</div><div class="march-controls"><label for="amount">Troops to march</label><input id="amount" type="number" min="1" max="${max}" value="${amount}"/></div>${btn(marchFrom?'× Cancel march':'⚔ Move / Attack','march',canAct()&&own&&tile.army>1&&g.mobilityUsed<2,'secondary full')}
-  <p class="hint">${marchFrom?'Choose an adjacent destination.':'Roads halve movement cost on connected edges.'}</p>${btn('End turn →','end',isActive()&&g.rolled,'endturn full')}
+  const canMove=canAct()&&own&&tile.army>1&&g.mobilityUsed<(g.mobilityCap||2);
+  const reserve=g.reinforcements?.[id]||0;
+  $('#control').innerHTML=`<div class="eyebrow">ROUND ${g.round} · COMMANDER ${g.turn+1}</div><div class="current-player"><span>♜</span><div><small>CURRENT TURN</small><b>${safe(state.players[g.turn].name)}</b></div></div>
+  ${phase==='finished'?'<div class="victory">✦ '+safe(winner?.name)+' has united the frontier!</div>':`
+  <div class="dice-prompt">${isActive()&&!g.rolled?'⚄ Drag and throw the dice on the board to begin your turn.':g.lastRoll?'⚄ RESOURCE ROLL: '+g.lastRoll.dice.join(' + ')+' = '+g.lastRoll.sum:'⚄ Waiting for the next dice roll.'}</div>
+  <div class="mobility">MOBILITY LEFT <b>${((g.mobilityCap||2)-g.mobilityUsed).toFixed(1)} / ${g.mobilityCap||2}</b></div>
+  <div class="mobility">TROOPS TO DEPLOY <b>${reserve} remaining</b></div>
+  <div class="eyebrow spaced">SELECTED PROVINCE</div>
+  <div class="selected">${tile?`<b>${safe(kinds[tile.terrain])}</b><p>${tile.numberHidden?'Dice number hidden · scout within 5 hexes':'Dice: '+(tile.number??'—')}<br>${tile.owner?state.players.find(p=>p.id===tile.owner)?.name:'Unclaimed or hidden'} · ${tile.masked?'Forces unknown':tile.army+' soldiers'}<br>${tile.structures?.length?'Structures: '+safe(tile.structures.join(', ')):'No structures'}</p>`:'<p>Click a hexagon to inspect it. Your territories have gold borders.</p>'}</div>
+  ${own&&buildOpen?buildPanel(tile):`<div class="eyebrow spaced">BUILD & EXPAND</div>${btn('⌂ Zoom into selected settlement','openBuild',own,'secondary full')}`}
+  <div class="eyebrow spaced">ROAD NETWORK</div>
+  ${btn(roadMode?'✕ Exit road construction':'══ BUILD ROAD · '+costLabel('road'),'road',canAct()&&canPay('road'),roadMode?'secondary full chosen':'secondary full')}
+  <p class="hint">${roadMode?'Golden markers show every legal shared edge. Click one to place a road.':'Roads belong on the hex sides. Roads you own reveal land two hexes away.'}</p>
+  <div class="eyebrow spaced">ARMY ORDERS</div>
+  <div class="march-controls"><label for="amount">Troops to march</label><input id="amount" type="number" min="1" max="${max}" value="${amount}"/></div>
+  ${btn(marchFrom?'✕ Cancel march':'⚔ March / Attack','march',canMove,'secondary full')}
+  ${btn('♟ Deploy '+Math.max(1,reserve)+' troops here','deploy',canAct()&&own&&tile.building&&reserve>0,'secondary full')}
+  <p class="hint">${marchFrom?'Choose an adjacent hex. River crossings require a bridge.':'2 reinforcements per turn from round 2; deploy at an outpost.'}</p>
+  ${btn('End turn →','end',isActive()&&g.rolled,'endturn full')}
   `}`;
-  board.update(g.tiles,{selected,roadMode,roads:g.roads,players:state.players});
-  $('#mapFooter').textContent=tile?kinds[tile.terrain]+' · '+tile.army+' troops · '+(tile.owner?state.players.find(p=>p.id===tile.owner)?.name:'Unclaimed'):'✦ Choose a tile to inspect the frontier.';
- }else{board.update(preview(),{});$('#mapFooter').textContent='✦ A new realm of 19 hexagons awaits.';}
+  board.update(g.tiles,{selected,roadMode,roads:g.roads,players:state.players,myId:id});
+  $('#mapFooter').textContent=tile?safe(kinds[tile.terrain])+' · '+(tile.masked?'ENEMY FORCES HIDDEN':tile.army+' troops')+' · '+(tile.owner?state.players.find(p=>p.id===tile.owner)?.name:'Unclaimed or fogged'):'✦ Gold borders mark your territories. Select an outpost to build.';
+  $('#mapGuide').textContent=roadMode?'CLICK A GLOWING SHARED EDGE TO PLACE A ROAD':marchFrom?'CLICK AN ADJACENT HEX TO MARCH':'DRAG MAP TO ORBIT · DRAG DICE TO THROW · CLICK A HEX TO BUILD';
+ }else{
+  board.update(preview(),{});
+  $('#mapFooter').textContent='✦ A world of 91 hexagons awaits.';
+  $('#mapGuide').textContent='DRAG TO ORBIT · SCROLL TO ZOOM · CLICK A HEX';
+ }
  $('#players').innerHTML=state?.players.map(p=>{
   const owned=g?.tiles.filter(t=>t.owner===p.id)||[];
-  const vp=owned.reduce((n,t)=>n+1+t.building,0);
-  return `<div class="player ${p.id===id?'self':''}"><span class="avatar ${p.color}">${safe(p.name[0])}</span><div><b>${safe(p.name)} ${p.id===id?'· YOU':''}</b><small>${g?owned.length+' territories · '+owned.reduce((n,t)=>n+t.army,0)+' soldiers':p.bot?'AI Kingdom':'Ready to play'}</small></div><strong>${g?vp+' VP':'—'}</strong></div>`;
+  const vp=g?.scores?.[p.id]??owned.reduce((n,t)=>n+1+(t.building?1:0)+(t.structures?.filter(x=>x!=='outpost').length||0),0);
+  return `<div class="player ${p.id===id?'self':''}"><span class="avatar ${p.color||''}">${safe(p.name[0])}</span><div><b>${safe(p.name)} ${p.id===id?'· YOU':''}</b><small>${g?g.phase==='draft'?'Drafting kingdom':owned.length+' visible territories':p.bot?'AI Kingdom':'Ready to play'}</small></div><strong>${g?.phase==='playing'||g?.phase==='finished'?vp+' VP':'—'}</strong></div>`;
  }).join('')||'<p class="hint">Your rival kingdoms will appear here.</p>';
- $('#resources').innerHTML=g&&me()?Object.entries(icons).map(([k,ico])=>`<div class="resource"><span>${ico}</span><label>${k[0].toUpperCase()+k.slice(1)}</label><b>${me().resources[k]||0}</b></div>`).join(''):'<p class="hint">The treasury opens when the game begins.</p>';
+ $('#resources').innerHTML=g&&me()?.resources?Object.entries(icons).map(([k,ico])=>`<div class="resource"><span>${ico}</span><label>${k[0].toUpperCase()+k.slice(1)}</label><b>${me().resources[k]||0}</b></div>`).join(''):'<p class="hint">Treasury opens after the homeland draft.</p>';
  $('#log').innerHTML=g?.log.slice(0,8).map(line=>`<div class="log"><span>✦</span>${safe(line)}</div>`).join('')||'<p class="hint">The chronicles await their first story.</p>';
 }
 $('#create').onclick=()=>command('room:create',{id,name:username()},r=>{displayRoom(r.code);toast('Realm created. Invite your friends!');});
