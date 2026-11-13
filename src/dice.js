@@ -74,6 +74,11 @@ export class DiceTray{
   addStatic([.20,.48,3.25],[2.07,.16,0],true);
   addStatic([4.25,.48,.20],[0,.16,-1.59],true);
   addStatic([4.25,.48,.20],[0,.16,1.59],true);
+  // High, transparent collision boundaries keep tossed dice on the rolling surface.
+  addStatic([.2,3.4,3.25],[-2.07,1.65,0]);
+  addStatic([.2,3.4,3.25],[2.07,1.65,0]);
+  addStatic([4.25,3.4,.2],[0,1.65,-1.59]);
+  addStatic([4.25,3.4,.2],[0,1.65,1.59]);
   this.dice=[];
   for(let i=0;i<5;i++){
    const mesh=makeDie(i<3?0xf3e4c8:0xd79b8a);
