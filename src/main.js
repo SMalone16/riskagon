@@ -117,7 +117,7 @@ function buildPanel(tile){
  if(!tile||(tile.owner!==id&&!canBridgeTile(tile)))return '';
  const options=tile.terrain==='river'?['bridge']:(tile.building?['homes','walls','armory',industry[tile.terrain],'barracks','stables'].filter(Boolean):['outpost']);
  return `<div class="builder"><div class="eyebrow">BUILD IN ${safe(kinds[tile.terrain]).toUpperCase()}</div><div class="builder-caption">Select a structure. Upgrades activate when this province's dice number is rolled.</div>
- ${options.map(kind=>`<button class="build-option" data-build="${kind}" ${canAct()&&canPay(kind)&&!tile.structures?.includes(kind)?'':'disabled'}><strong>${safe(kind[0].toUpperCase()+kind.slice(1))}</strong><small>${safe(structureNotes[kind])}</small><span>${costLabel(kind)} ${tile.structures?.includes(kind)?' · BUILT':''}</span></button>`).join('')}
+ ${options.map(kind=>`<button class="build-option" data-build="${kind}" ${canAct()&&canPay(kind)&&!tile.structures?.includes(kind)&&(kind==='outpost'||kind==='bridge'||tile.structures?.length<5)?'':'disabled'}><strong>${safe(kind[0].toUpperCase()+kind.slice(1))}</strong><small>${safe(structureNotes[kind])}</small><span>${costLabel(kind)} ${tile.structures?.includes(kind)?' · BUILT':''}</span></button>`).join('')}
  ${btn('← Close settlement view','closeBuild',true,'secondary full')}</div>`;
 }
 function canPay(type){return Object.entries(costs[type]||{}).every(([key,n])=>(me()?.resources?.[key]||0)>=n);}
@@ -164,7 +164,7 @@ function render(){
   <div class="selected">${tile?`<b>${safe(kinds[tile.terrain])}</b><p>${tile.numberHidden?'Dice number hidden · scout within 5 hexes':'Dice: '+(tile.number??'—')}<br>${tile.owner?state.players.find(p=>p.id===tile.owner)?.name:'Unclaimed or hidden'} · ${tile.masked?'Forces unknown':tile.army+' soldiers'}<br>${tile.structures?.length?'Structures: '+safe(tile.structures.join(', ')):'No structures'}</p>`:'<p>Click a hexagon to inspect it. Your territories have gold borders.</p>'}</div>
   ${(own||canBridge)&&buildOpen?buildPanel(tile):`<div class="eyebrow spaced">BUILD & EXPAND</div>${btn(canBridge?'≈ Build a river bridge':'⌂ Zoom into selected settlement','openBuild',own||canBridge,'secondary full')}`}
   <div class="eyebrow spaced">ROAD NETWORK</div>
-  ${btn(roadMode?'✕ Exit road construction':'══ BUILD ROAD · '+costLabel('road'),'road',canAct()&&canPay('road'),roadMode?'secondary full chosen':'secondary full')}
+  ${btn(roadMode?'✕ Exit road construction':'══ BUILD ROAD · '+costLabel('road'),'road',roadMode||(canAct()&&canPay('road')),roadMode?'secondary full chosen':'secondary full')}
   <p class="hint">${roadMode?'Golden markers show every legal shared edge. Click one to place a road.':'Roads belong on the hex sides. Roads you own reveal land two hexes away.'}</p>
   <div class="eyebrow spaced">ARMY ORDERS</div>
   <div class="march-controls"><label for="amount">Troops to march</label><input id="amount" type="number" min="1" max="${max}" value="${amount}"/></div>
