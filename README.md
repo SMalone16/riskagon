@@ -60,7 +60,7 @@ A new province has no building. Construct an **outpost** before you can upgrade 
 ## What has shipped
 
 - 91-hex map with resource provinces, river and lake water tiles, team drafting, fog of war and large-to-small scenery transitions.
-- 3D procedural colored soldiers, archers, and mounted troops, in a compatible low-poly visual style.
+- 3D KayKit Knight and Rogue character GLBs loaded automatically from the official CC0 Adventurers repository, with original procedural soldiers, archers, and cavalry as fallbacks. Larger multi-unit stacks also use the Barbarian GLB.
 - 3D dice rigid bodies with interactive click/hold/drag/release, collision walls, physics bounces, and server-authoritative turn/combat rolls.
 - River bridge construction and crossing rules. Lake hexes block land troops.
 - Responsive kingdom controls and zoomed construction view, realtime turn log, multiplayer rooms and basic AI.
@@ -92,6 +92,6 @@ These mechanics will be server-validated rather than simulated solely in the bro
 
 ## Licensing & prototype limitations
 
-The included asset importer uses [KayKit Medieval Hexagon](https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0) (CC0-1.0). Troop meshes are original code geometry so no character-license dependency is required. [KayKit Adventurers](https://kaylousberg.itch.io/kaykit-adventurers) is recommended as the next animation-ready character import.
+The included asset importer uses [KayKit Medieval Hexagon](https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0) (CC0-1.0). The official [KayKit Adventurers](https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0) Knight, Rogue, and Barbarian GLBs are also CC0-1.0, and their license is copied during asset sync. Offline procedural troop geometry stays available. [KayKit Adventurers](https://kaylousberg.itch.io/kaykit-adventurers) is already the 3D troop model source; full rigged animation blending remains a follow-up.
 
 **Important limitations**: No permanent saved matches, account authentication, spectator mode, trading market, navy/shipyards, or full visual asset optimization yet. The dice have actual client-side rigid-body physics and player-directed throws, but the server determines trusted outcomes, so pushing the dice does not let a client manipulate resource or combat odds.
