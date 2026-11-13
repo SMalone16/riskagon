@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {makeTroop} from './troops.js';
+import {clone as cloneSkinned} from 'three/addons/utils/SkeletonUtils.js';
 
 const SQRT3=Math.sqrt(3);
 const FACTIONS={blue:0x4b9eec,red:0xeb756b,green:0x65c5a2,yellow:0xf1c36d};
@@ -131,7 +132,7 @@ export class Board{
   rim.scale.set(1,.5,.91);rim.castShadow=false;
   this.board=new THREE.Group();this.world.add(this.board);
   this.pickables=[];this.ray=new THREE.Raycaster();this.pointer=new THREE.Vector2();
-  this.loader=new GLTFLoader();this.models=new Map();this.kaykit=false;this.version=0;
+  this.loader=new GLTFLoader();this.models=new Map();this.characterModels=new Map();this.kaykit=false;this.version=0;
   this.tiles=[];this.options={};this.hover=null;this.pointerDown=null;
   fetch('/assets/kaykit/manifest.json').then(r=>{if(!r.ok)throw Error();return r.json()})
    .then(()=>{this.kaykit=true;this.update(this.tiles,this.options);}).catch(()=>{});
@@ -186,6 +187,32 @@ export class Board{
   const target=pos(tile);this.controls.target.copy(target);this.camera.position.copy(target).add(new THREE.Vector3(13,19,23));this.camera.zoom=Math.min(2.45,this.camera.zoom*1.7);this.camera.updateProjectionMatrix();this.controls.update();
  }
  reset(){this.controls.target.set(0,0,0);this.camera.position.set(18,24,28);this.camera.zoom=1;this.camera.updateProjectionMatrix();this.controls.update();}
+ async character(name){
+  if(!this.kaykit)return null;
+  if(!this.characterModels.has(name)){
+   const request=new Promise(resolve=>this.loader.load('/assets/kaykit/characters/'+name+'.glb',loaded=>resolve(loaded.scene),undefined,()=>resolve(null)));
+   this.characterModels.set(name,request);
+  }
+  const model=await this.characterModels.get(name);
+  return model?cloneSkinned(model):null;
+ }
+ attachCharacter(holder,name,color,desiredHeight=.66){
+  if(!this.kaykit)return;
+  const version=this.version;
+  this.character(name).then(model=>{
+   if(!model||version!==this.version)return;
+   const bounds=new THREE.Box3().setFromObject(model),height=bounds.getSize(new THREE.Vector3()).y;
+   if(!height||!Number.isFinite(height))return;
+   const scale=desiredHeight/height;
+   holder.clear();model.scale.setScalar(scale);
+   model.position.y=-bounds.min.y*scale;
+   model.traverse(object=>{if(object.isMesh){object.castShadow=true;object.receiveShadow=true;}});
+   holder.add(model);
+   // A tabard-colored hex pedestal keeps all army factions unmistakable.
+   const banner=mesh(new THREE.CylinderGeometry(.20,.20,.055,6),makeMat(color),holder,0,.025,0);
+   banner.castShadow=false;
+  });
+ }
  update(tiles=[],options={}){
   this.version++;this.tiles=tiles;this.options=options;
   this.board.clear();this.pickables=[];
@@ -254,9 +281,14 @@ export class Board{
       }
     }
     const army=new THREE.Group();army.position.set(tile.building?.25:0,0,tile.building?.12:0);top.add(army);
-    army.add(makeTroop(color,'infantry',.48));army.children.at(-1).position.set(-.2,0,-.15);
-    if(tile.army>2){const troop=makeTroop(color,'archer',.41);troop.position.set(.16,0,-.21);army.add(troop);}
-    if(tile.army>5){const troop=makeTroop(color,tile.structures?.includes('stables')?'cavalry':'infantry',.38);troop.position.set(-.03,0,.20);army.add(troop);}
+    const addSoldier=(name,kind,x,z,height)=>{
+     const holder=new THREE.Group();holder.position.set(x,0,z);army.add(holder);
+     holder.add(makeTroop(color,kind,height/.95));
+     if(kind!=='cavalry')this.attachCharacter(holder,name,color,height);
+    };
+    addSoldier('Knight','infantry',-.20,-.15,.64);
+    if(tile.army>2)addSoldier('Rogue','archer',.16,-.21,.55);
+    if(tile.army>5)addSoldier('Barbarian',tile.structures?.includes('stables')?'cavalry':'infantry',-.03,.20,.52);
     const count=textSprite(String(tile.army),'#fff','#273c4a',.35);
     count.position.set(.52,.24,.51);top.add(count);
    }
