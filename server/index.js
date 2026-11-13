@@ -1,117 +1,129 @@
+
 import express from 'express';
 import {createServer} from 'node:http';
 import {Server} from 'socket.io';
 import {randomBytes} from 'node:crypto';
-import {createGame,applyAction,publicRoom,RESOURCES,COSTS,getTile,neighbors} from './game.js';
-const app=express();
-const server=createServer(app);
-const io=new Server(server,{maxHttpBufferSize:50_000});
+import {newRealm,currentDrafter,chooseDraft,perform,forPlayer,adjacent,dist,COLORS} from './realm.js';
+const app=express(),server=createServer(app),io=new Server(server,{maxHttpBufferSize:100_000});
 const rooms=new Map();
-const send=(room)=>io.to(room.code).emit('state',publicRoom(room));
-const clean=s=>typeof s==='string'?s.trim().replace(/[<>]/g,'').slice(0,24):'';
-const newCode=()=>{
-  let code;
-  do{code=randomBytes(3).toString('hex').toUpperCase();}while(rooms.has(code));
-  return code;
-};
+const clean=x=>typeof x==='string'?x.trim().replace(/[<>]/g,'').slice(0,32):'';
 const seat=(room,id)=>room.players.find(p=>p.id===id);
-const perform=(room,id,action)=>{
-  applyAction(room,id,action);
-  send(room);
-  maybeBot(room);
+const send=room=>{
+ for(const client of io.sockets.sockets.values())if(client.data.code===room.code&&seat(room,client.data.id))client.emit('state',forPlayer(room,client.data.id));
 };
-function maybeBot(room){
-  const g=room.game;
-  if(!g||g.phase!=='playing'||!room.players[g.turn].bot||room.botPending) return;
-  room.botPending=true;
-  setTimeout(()=>{
-    room.botPending=false;
-    if(!room.game||room.game.phase!=='playing')return;
-    const bot=room.players[room.game.turn];
-    if(!bot?.bot)return;
-    try{
-      perform(room,bot.id,{type:'roll'});
-      const home=room.game.tiles.find(t=>t.owner===bot.id&&t.building);
-      if(home&&bot.resources.ore>=1&&bot.resources.sheep>=1)perform(room,bot.id,{type:'recruit',tile:home.id});
-      const advance=room.game.tiles
-        .filter(t=>t.owner===bot.id&&t.army>1)
-        .flatMap(t=>room.game.tiles.filter(u=>neighbors(t,u)&&u.owner!==bot.id)
-          .map(u=>({t,u})))
-        .sort((a,b)=>(a.u.owner?1:0)-(b.u.owner?1:0))[0];
-      if(advance)perform(room,bot.id,{type:'march',from:advance.t.id,to:advance.u.id,amount:Math.max(1,advance.t.army-1)});
-      if(room.game.phase==='playing')perform(room,bot.id,{type:'end'});
-    }catch(e){
-      try{if(room.game.phase==='playing'&&room.game.rolled)perform(room,bot.id,{type:'end'});}catch{}
-    }
-  },850);
+const code=()=>{let id;do{id=randomBytes(3).toString('hex').toUpperCase();}while(rooms.has(id));return id;};
+function advance(room){
+ send(room);
+ scheduleBot(room);
 }
-app.get('/api/health',(_req,res)=>res.json({ok:true,rooms:rooms.size,app:'riskagon'}));
-io.on('connection',socket=>{
-  socket.on('room:create',({id,name}={},ack=()=>{})=>{
-    id=clean(id);name=clean(name)||'Explorer';
-    if(id.length<8)return ack({ok:false,error:'Invalid session ID.'});
-    const code=newCode();
-    const room={code,host:id,players:[{id,name,color:'blue',resources:{},connected:true,bot:false}],game:null,botPending:false};
-    rooms.set(code,room);
-    socket.join(code);socket.data={code,id};
-    ack({ok:true,code});send(room);
-  });
-  socket.on('room:join',({code,id,name}={},ack=()=>{})=>{
-    code=clean(code).toUpperCase();id=clean(id);name=clean(name)||'Explorer';
-    const room=rooms.get(code);
-    if(!room)return ack({ok:false,error:'Room not found. Ask the host for a new link.'});
-    if(id.length<8)return ack({ok:false,error:'Invalid session ID.'});
-    let player=seat(room,id);
-    if(!player){
-      if(room.game)return ack({ok:false,error:'This game has already started.'});
-      if(room.players.length>=4)return ack({ok:false,error:'The room is full (4 players).'});
-      player={id,name,color:['blue','red','green','yellow'][room.players.length],resources:{},connected:true,bot:false};
-      room.players.push(player);
-    }else{player.connected=true;}
-    socket.join(code);socket.data={code,id};
-    ack({ok:true,code});send(room);maybeBot(room);
-  });
-  socket.on('room:addBot',(_args={},ack=()=>{})=>{
-    const room=rooms.get(socket.data?.code);
-    if(!room||room.host!==socket.data.id)return ack({ok:false,error:'Host only.'});
-    if(room.game||room.players.length>=4)return ack({ok:false,error:'Game started or room full.'});
-    const id='bot-'+randomBytes(6).toString('hex');
-    room.players.push({id,name:'Kingdom AI '+room.players.length,color:['blue','red','green','yellow'][room.players.length],resources:{},connected:true,bot:true});
-    ack({ok:true});send(room);
-  });
-  socket.on('room:start',(_args={},ack=()=>{})=>{
-    const room=rooms.get(socket.data?.code);
-    if(!room||room.host!==socket.data.id)return ack({ok:false,error:'Only the host can start.'});
-    if(room.game||room.players.length<2)return ack({ok:false,error:'Need at least two kingdoms.'});
-    room.game=createGame(room.players);
-    ack({ok:true});send(room);maybeBot(room);
-  });
-  socket.on('game:action',(action={},ack=()=>{})=>{
-    const room=rooms.get(socket.data?.code);
-    if(!room||!seat(room,socket.data?.id))return ack({ok:false,error:'Join a room first.'});
-    try{perform(room,socket.data.id,action);ack({ok:true});}
-    catch(e){ack({ok:false,error:String(e.message||e)});}
-  });
-  socket.on('disconnect',()=>{
-    const room=rooms.get(socket.data?.code);
-    if(!room)return;
-    const p=seat(room,socket.data?.id);
-    if(p)p.connected=false;
-    if(!room.game && room.host===socket.data?.id){
-      const next=room.players.find(x=>x.connected&&!x.bot);
-      if(next)room.host=next.id;
+function scheduleBot(room){
+ const g=room.game;if(!g||room.botBusy)return;
+ const id=g.phase==='draft'?currentDrafter(room):g.phase==='playing'?room.players[g.turn].id:null;
+ const bot=seat(room,id);if(!bot?.bot)return;
+ room.botBusy=true;
+ setTimeout(()=>{
+  room.botBusy=false;
+  const now=room.game;
+  if(!now||now.phase==='finished')return;
+  const id=now.phase==='draft'?currentDrafter(room):room.players[now.turn]?.id;
+  if(id!==bot.id)return;
+  try{
+   if(now.phase==='draft'){
+    const value=now.draftStage==='color'?COLORS.find(x=>!room.players.some(p=>p.color===x)):
+     [...now.spawnChoices].sort((a,b)=>{
+      const score=k=>now.tiles.filter(x=>x.owner).reduce((m,x)=>{
+       const [q,r]=k.split(',').map(Number);return Math.min(m,dist({q,r},x));
+      },99);
+      return score(b)-score(a);
+     })[0];
+    chooseDraft(room,id,now.draftStage,value);
+   }else if(now.phase==='playing'){
+    perform(room,id,{type:'roll'});
+    if((now.reinforcements[id]||0)>0){
+     const home=now.tiles.find(t=>t.owner===id&&t.building);
+     if(home)perform(room,id,{type:'deploy',tile:home.id,count:now.reinforcements[id]});
     }
-    send(room);
-  });
+    const move=now.tiles.filter(t=>t.owner===id&&t.army>1)
+      .flatMap(t=>now.tiles.filter(u=>adjacent(t,u)&&!u.owner&&u.terrain!=='lake'&&(u.terrain!=='river'||u.bridge===id)).map(u=>({from:t,to:u})))
+      .sort((a,b)=>b.from.army-a.from.army)[0];
+    if(move)perform(room,id,{type:'march',from:move.from.id,to:move.to.id,amount:Math.max(1,move.from.army-1)});
+    perform(room,id,{type:'end'});
+   }
+  }catch(error){console.error('Bot action:',error.message);try{if(now.phase==='playing'&&now.rolled)perform(room,id,{type:'end'});}catch{}}
+  advance(room);
+ },650);
+}
+app.get('/api/health',(_req,res)=>res.json({ok:true,rooms:rooms.size,app:'riskagon',version:'0.2.0'}));
+io.on('connection',socket=>{
+ socket.on('room:create',({id,name}={},reply=()=>{})=>{
+  id=clean(id);name=clean(name)||'Commander';
+  if(id.length<8)return reply({ok:false,error:'Invalid session identity.'});
+  const roomCode=code();
+  const room={code:roomCode,host:id,players:[{id,name,connected:true,bot:false,color:null,resources:{}}],game:null,botBusy:false};
+  rooms.set(roomCode,room);
+  socket.data={code:roomCode,id};socket.join(roomCode);
+  reply({ok:true,code:roomCode});send(room);
+ });
+ socket.on('room:join',({code:roomCode,id,name}={},reply=()=>{})=>{
+  roomCode=clean(roomCode).toUpperCase();id=clean(id);name=clean(name)||'Commander';
+  const room=rooms.get(roomCode);
+  if(!room)return reply({ok:false,error:'This realm does not exist or the server restarted.'});
+  if(id.length<8)return reply({ok:false,error:'Invalid session identity.'});
+  let p=seat(room,id);
+  if(!p){
+   if(room.game)return reply({ok:false,error:'This match is already underway. Ask for the next game.'});
+   if(room.players.length===4)return reply({ok:false,error:'This room is full.'});
+   p={id,name,connected:true,bot:false,color:null,resources:{}};
+   room.players.push(p);
+  }else{p.connected=true;}
+  socket.data={code:roomCode,id};socket.join(roomCode);
+  reply({ok:true,code:roomCode});advance(room);
+ });
+ socket.on('room:addBot',(_={},reply=()=>{})=>{
+  const room=rooms.get(socket.data.code);
+  if(!room||room.host!==socket.data.id)return reply({ok:false,error:'Only the host can invite AI.'});
+  if(room.game||room.players.length>=4)return reply({ok:false,error:'Game started or room full.'});
+  room.players.push({id:'bot-'+randomBytes(7).toString('hex'),name:'Kingdom AI '+room.players.length,color:null,connected:true,bot:true,resources:{}});
+  reply({ok:true});send(room);
+ });
+ socket.on('room:start',(_={},reply=()=>{})=>{
+  const room=rooms.get(socket.data.code);
+  if(!room||room.host!==socket.data.id)return reply({ok:false,error:'Only the host can start.'});
+  if(room.game||room.players.length<2)return reply({ok:false,error:'Invite at least one other kingdom.'});
+  room.game=newRealm(room.players);
+  reply({ok:true});advance(room);
+ });
+ socket.on('draft:pick',({kind,value}={},reply=()=>{})=>{
+  const room=rooms.get(socket.data.code);
+  if(!room)return reply({ok:false,error:'Join a room first.'});
+  try{chooseDraft(room,socket.data.id,kind,value);reply({ok:true});advance(room);}
+  catch(e){reply({ok:false,error:e.message});}
+ });
+ socket.on('game:action',(data={},reply=()=>{})=>{
+  const room=rooms.get(socket.data.code);
+  if(!room)return reply({ok:false,error:'Join a room first.'});
+  try{perform(room,socket.data.id,data);reply({ok:true,roll:room.game.lastRoll,battle:room.game.lastBattle});advance(room);}
+  catch(e){reply({ok:false,error:e.message});}
+ });
+ socket.on('disconnect',()=>{
+  const room=rooms.get(socket.data?.code);
+  if(!room)return;
+  const p=seat(room,socket.data.id);if(p)p.connected=false;
+  if(!room.game&&room.host===socket.data.id){
+   const next=room.players.find(x=>x.connected&&!x.bot);
+   if(next)room.host=next.id;
+  }
+  send(room);
+ });
 });
 if(process.env.NODE_ENV==='production'){
-  const path=await import('node:path');
-  app.use(express.static(path.resolve('dist')));
-  app.get('*',(_req,res)=>res.sendFile(path.resolve('dist/index.html')));
+ const path=await import('node:path');
+ app.use(express.static(path.resolve('dist')));
+ app.get('*',(_req,res)=>res.sendFile(path.resolve('dist/index.html')));
 }else{
-  const {createServer:createVite}=await import('vite');
-  const vite=await createVite({server:{middlewareMode:true},appType:'spa'});
-  app.use(vite.middlewares);
+ const {createServer:createVite}=await import('vite');
+ const vite=await createVite({server:{middlewareMode:true},appType:'spa'});
+ app.use(vite.middlewares);
 }
 const port=Number(process.env.PORT)||3000;
-server.listen(port,'0.0.0.0',()=>console.log('RISKAGON online at http://localhost:'+port));
+server.listen(port,'0.0.0.0',()=>console.log('Riskagon v0.2 at http://localhost:'+port));
