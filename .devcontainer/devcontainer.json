@@ -1,10 +1,21 @@
 {
   "name": "Riskagon • Multiplayer Hex Strategy",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
-  "forwardPorts": [3000],
+  "forwardPorts": [
+    3000
+  ],
   "portsAttributes": {
-    "3000": { "label": "Riskagon Multiplayer", "onAutoForward": "openBrowser" }
+    "3000": {
+      "label": "Riskagon Multiplayer",
+      "onAutoForward": "openBrowser"
+    }
   },
-  "postCreateCommand": "npm install",
-  "customizations": { "vscode": { "extensions": ["dbaeumer.vscode-eslint"] } }
+  "postCreateCommand": "npm install && npm run assets:sync",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  }
 }
