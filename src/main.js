@@ -2,16 +2,17 @@
 import './style.css';
 import {io} from 'socket.io-client';
 import {Board} from './board.js';
+import {DiceTray} from './dice.js';
 const socket=io();
 const root=document.getElementById('app');
 const id=sessionStorage.getItem('riskagon:id')||crypto.randomUUID().slice(0,22);
 sessionStorage.setItem('riskagon:id',id);
 const safe=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const $=s=>document.querySelector(s);
-const kinds={forest:'Forest',fields:'Wheat Fields',pasture:'Pasture',hills:'Clay Hills',mountains:'Iron Mountains',desert:'Desert'};
+const kinds={forest:'Forest',fields:'Wheat Fields',pasture:'Pasture',hills:'Clay Hills',mountains:'Iron Mountains',desert:'Desert',river:'River Crossing',lake:'Lake'};
 const icons={wood:'🌲',brick:'🧱',wheat:'🌾',sheep:'🐑',ore:'⛏️'};
 let code=new URLSearchParams(location.search).get('room')?.toUpperCase()||'';
-let state=null,selected=null,roadMode=false,marchFrom=null,amount=2;
+let state=null,selected=null,roadMode=false,marchFrom=null,amount=2,buildOpen=false,lastBattleKey='',lastRollSeen='';
 root.innerHTML=`
 <header><div class="logo"><span class="seal">R</span><div><b>RISKAGON</b><small>THE FRONTIER AWAITS</small></div></div><span class="header-caption">HEXAGONAL STRATEGY · MULTIPLAYER</span><div class="header-actions"><span id="online">CONNECTING</span><button id="helpBtn">? RULES</button></div></header>
 <main class="layout">
@@ -19,15 +20,15 @@ root.innerHTML=`
 <section id="welcome"><div class="eyebrow">YOUR KINGDOM</div><label>Commander name</label><input id="name" maxlength="24" placeholder="Commander" value="Commander"/><button class="primary full" id="create">✦ Create new realm</button><div class="separate">OR JOIN FRIENDS</div><div class="inline"><input id="codeInput" maxlength="6" placeholder="ROOM CODE"/><button id="join">JOIN</button></div><p class="hint">Invite up to 3 friends, or challenge an AI kingdom.</p></section>
 <section id="lobby" hidden></section><section id="control" hidden></section>
 <div class="footnote">✦ BUILT FOR THE FRONTIER · EARLY ACCESS</div></aside>
-<div class="center"><div class="maphead"><div><div class="eyebrow">THE KNOWN WORLD</div><h2 id="mapTitle">A land worth fighting for.</h2></div><div class="round"><span id="round">19 TERRITORIES</span><small id="turn">ROLL · BUILD · CONQUER</small></div></div>
-<div class="map"><div id="board"></div><div class="watermark">✦ THE FRONTIER</div><div class="compass">N<br>↑</div><div id="mapGuide">DRAG TO ORBIT · SCROLL TO ZOOM · CLICK A HEX</div></div><div class="mapfooter" id="mapFooter">✦ Select any hexagon to inspect its resources.</div></div>
+<div class="center"><div class="maphead"><div><div class="eyebrow">THE KNOWN WORLD</div><h2 id="mapTitle">A land worth fighting for.</h2></div><div class="round"><span id="round">91 TERRITORIES</span><small id="turn">ROLL · BUILD · CONQUER</small></div></div>
+<div class="map"><div id="board"></div><div class="dice-hud" id="diceHUD"><div class="dice-caption"><span>⚄ PHYSICAL DICE</span><small id="diceHint">WAITING FOR YOUR TURN</small></div><div class="dice-stage" id="diceStage"></div><button id="diceFallback" data-action="physicalRoll" disabled>ROLL THE DICE</button><div class="dice-note" id="diceNote">Drag, release &amp; watch them tumble</div></div><div class="watermark">✦ THE FRONTIER</div><div class="compass">N<br>↑</div><div id="mapGuide">DRAG TO ORBIT · SCROLL TO ZOOM · CLICK A HEX</div></div><div class="mapfooter" id="mapFooter">✦ Select any hexagon to inspect its resources.</div></div>
 <aside class="right"><section><div class="eyebrow">KINGDOMS OF THE REALM</div><div id="players" class="list"></div></section><section><div class="eyebrow">YOUR TREASURY</div><div id="resources" class="list"></div></section><section><div class="eyebrow">CHRONICLES OF WAR</div><div id="log" class="list"></div></section></aside>
 </main><div id="toast" role="status"></div>
 <div id="rules" class="rules" hidden><div class="rules-content"><button id="closeRules" class="close">×</button><div class="eyebrow">FIELD MANUAL</div><h2>How to conquer.</h2>
-<p>Be the first kingdom to reach <b>13 points.</b> Each territory scores one, a settlement adds one and a fortress adds two.</p>
-<p><b>1. Roll:</b> All kingdoms collect from owned tiles matching the dice roll. <b>2. Build:</b> Settlements, fortresses, and roads. Roads go on hex borders, not through their centers.</p>
-<p><b>3. Recruit:</b> Spend ore and sheep for 2 troops at a building. <b>4. March:</b> Pick your own hex, click Move / Attack, then an adjacent destination. Always leave a garrison.</p>
-<p><b>5. Battle:</b> Risk-style dice resolve attacks; defenders win ties. Roads boost your attacks and make movement cheaper; fortresses improve defense.</p>
+<p>Be the first kingdom to reach <b>32 points.</b> Territories, outposts and upgrades score points. Draft colors and starting hexes before the first turn.</p>
+<p><b>1. Physically roll:</b> Drag the 3D dice into the walled rolling tray. Matching numbered provinces produce resources. Numbers are visible within 5 hexes of your scouts.</p><p><b>2. Build:</b> Select your territory to zoom in, then choose houses, walls, industries, barracks, stables, and armories. Click Build Road to highlight eligible shared hex edges in gold. Bridges unlock river hex crossings.</p>
+<p><b>3. Deploy:</b> From round two, each kingdom gets two free troops per turn to assign at its outposts. A barracks produces troops when its tile number is rolled. <b>4. March:</b> Move between adjacent hexes, always leaving one garrison.</p>
+<p><b>5. Battle:</b> Risk-style dice resolve attacks; defenders win ties. Roads boost attacks and reduce movement cost. Walls improve defense; armories store attack boosts.</p>
 <button class="primary full" id="doneRules">RETURN TO GAME</button></div></div>`;
 $('#name').value=localStorage.getItem('riskagon:name')||'Commander';
 function toast(message,error=false){const t=$('#toast');t.textContent=message;t.className=error?'show error':'show';setTimeout(()=>t.className='',3500);}
@@ -49,21 +50,60 @@ function command(event,data,onSuccess){
 function displayRoom(codeValue){code=codeValue;history.replaceState(null,'','?room='+code);}
 function username(){const name=$('#name').value.trim().slice(0,24)||'Commander';localStorage.setItem('riskagon:name',name);return name;}
 function joinRoom(value){command('room:join',{code:value.trim().toUpperCase(),id,name:username()},r=>{displayRoom(r.code);toast('Joined realm '+r.code);});}
+
 const board=new Board($('#board'),tile=>{
- if(!state?.game||state.game.phase==='finished')return;
+ const g=state?.game;if(!g||g.phase==='finished')return;
+ if(g.phase==='draft'){
+  if(g.draftStage==='spawn'&&g.spawnChoices.includes(tile)){
+   command('draft:pick',{kind:'spawn',value:tile},()=>toast('Your starting location is secured.'));
+  }return;
+ }
  if(marchFrom){
   if(tile===marchFrom){marchFrom=null;render();return;}
-  const source=state.game.tiles.find(t=>t.id===marchFrom);
+  const source=g.tiles.find(t=>t.id===marchFrom);
+  if(!source)return;
   act({type:'march',from:marchFrom,to:tile,amount:Math.min(Math.max(1,amount),source.army-1)});
-  marchFrom=null;selected=tile;render();return;
+  marchFrom=null;selected=tile;buildOpen=false;render();return;
  }
- selected=tile;roadMode=false;render();
+ selected=tile;roadMode=false;
+ const owner=g.tiles.find(t=>t.id===tile)?.owner;
+ buildOpen=owner===id;
+ if(buildOpen)board.focus(tile);else board.reset();
+ render();
 },edge=>{if(roadMode)act({type:'road',edge});});
 board.update(preview(),{});
-function canPay(type){
- const costs={settlement:{wood:1,brick:1,wheat:1,sheep:1},fort:{ore:2,brick:1,wheat:1},recruit:{ore:1,sheep:1},road:{wood:1,brick:1}};
- return Object.entries(costs[type]).every(([key,n])=>(me()?.resources[key]||0)>=n);
+const dice=new DiceTray($('#diceStage'),()=>new Promise((resolve,reject)=>{
+ if(!isActive()||state.game.rolled){reject(Error('Wait for your turn.'));return;}
+ socket.emit('game:action',{type:'roll'},response=>{
+  if(!response?.ok){toast(response?.error||'Roll failed',true);reject(Error(response?.error));return;}
+  resolve(response.roll);
+ });
+}));
+const costs={
+ road:{wood:1,brick:1},bridge:{wood:2,brick:1,ore:1},outpost:{wood:1,brick:1},
+ homes:{wood:2,brick:1,wheat:1},walls:{brick:2,ore:1},armory:{ore:2,brick:1},
+ farm:{wood:2,wheat:1},lumberyard:{wood:1,brick:1},quarry:{wood:1,brick:2},
+ mine:{wood:2,ore:1},ranch:{wood:1,sheep:2},barracks:{wood:2,brick:2,ore:1},
+ stables:{wood:2,wheat:2,sheep:1}
+};
+const structureNotes={
+ outpost:'Enables building and troop deployment',homes:'+1 native resource when rolled',
+ walls:'Stores defense charges on matching rolls',armory:'Stores attack bonuses when rolled',
+ farm:'+2 wheat on a matching roll',lumberyard:'+2 wood on a matching roll',
+ quarry:'+2 brick on a matching roll',mine:'+2 ore on a matching roll',ranch:'+2 sheep on a matching roll',
+ barracks:'+2 troops on a matching roll',stables:'Stores a mobility point when rolled',
+ bridge:'Cross this river with armies'
+};
+const industry={forest:'lumberyard',fields:'farm',hills:'quarry',mountains:'mine',pasture:'ranch'};
+const costLabel=k=>Object.entries(costs[k]||{}).map(([r,n])=>n+' '+icons[r]).join(' · ');
+function buildPanel(tile){
+ if(!tile||tile.owner!==id)return '';
+ const options=tile.terrain==='river'?['bridge']:(tile.building?['homes','walls','armory',industry[tile.terrain],'barracks','stables'].filter(Boolean):['outpost']);
+ return `<div class="builder"><div class="eyebrow">BUILD IN ${safe(kinds[tile.terrain]).toUpperCase()}</div><div class="builder-caption">Select a structure. Upgrades activate when this province's dice number is rolled.</div>
+ ${options.map(kind=>`<button class="build-option" data-build="${kind}" ${canAct()&&canPay(kind)&&!tile.structures?.includes(kind)?'':'disabled'}><strong>${safe(kind[0].toUpperCase()+kind.slice(1))}</strong><small>${safe(structureNotes[kind])}</small><span>${costLabel(kind)} ${tile.structures?.includes(kind)?' · BUILT':''}</span></button>`).join('')}
+ ${btn('← Close settlement view','closeBuild',true,'secondary full')}</div>`;
 }
+function canPay(type){return Object.entries(costs[type]||{}).every(([key,n])=>(me()?.resources?.[key]||0)>=n);}
 function btn(text,action,enabled=true,cls=''){return `<button data-action="${action}" class="${cls}" ${enabled?'':'disabled'}>${text}</button>`;}
 function render(){
  const g=state?.game;
