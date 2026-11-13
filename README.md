@@ -24,7 +24,7 @@ npm run build
 
 1. **Create a realm**, share its link, add one or more AI kingdoms if you want to play without friends.
 2. **Draft a banner** in player order (blue/red/green/yellow), then **draft starting homelands** in reverse order. All homelands start with **3 troops, 1 outpost, 1 wood/brick/wheat/sheep and 0 ore**.
-3. At the start of your turn, **drag one of the 3D dice and release it into the rolling tray**, which has gravity, collision walls and angular momentum. The server resolves the dice fairly and the simulated dice settle on the authoritative faces. The button underneath is an accessible keyboard/touch fallback.
+3. At the start of your turn, **drag one of the 3D dice and release it into the rolling tray**, which has gravity, collision walls and angular momentum. Both the client and server simulate rigid-body throws. The server includes the direction and speed of your throw, adds secret random initial rotations, then reads the uppermost physical face to authoritatively determine the result; the client settles its animation to those trusted faces. The button underneath is an accessible keyboard/touch fallback.
 4. Provincial resources produce **only** when their dice number is rolled. Upgrade buildings in that province to produce more resources, fortify defenses, gain troops, or accumulate movement.
 5. **Click an owned hex** to zoom in and open its building catalog. **Build Road** highlights shared border edges in gold: click the desired edge, not the center of a tile. Roads cost 1 wood + 1 brick and halve the cost of crossing that border.
 6. Choose **March / Attack** from an occupied hex, then click an adjacent destination. Armies must leave at least one garrison at the source. Combat uses attacker-versus-defender dice with ties awarded to defenders, and battle rolls are visualized with the physics dice.
@@ -81,6 +81,7 @@ These mechanics will be server-validated rather than simulated solely in the bro
 ## Project files
 
 - `server/realm.js`: new 91-hex game model, drafting, fog, economy, combat and water crossing rules.
+- `server/dicePhysics.js`: authoritative cannon-es collision simulation, throw input clamping, and face detection.
 - `server/index.js`: Express / Socket.IO room and bot orchestration.
 - `server/realm.test.js`: new rules tests.
 - `src/board.js`: large 3D hex board, roads, river bridges, fog and province structures.
@@ -94,4 +95,4 @@ These mechanics will be server-validated rather than simulated solely in the bro
 
 The included asset importer uses [KayKit Medieval Hexagon](https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0) (CC0-1.0). The official [KayKit Adventurers](https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0) Knight, Rogue, and Barbarian GLBs are also CC0-1.0, and their license is copied during asset sync. Offline procedural troop geometry stays available. [KayKit Adventurers](https://kaylousberg.itch.io/kaykit-adventurers) is already the 3D troop model source; full rigged animation blending remains a follow-up.
 
-**Important limitations**: No permanent saved matches, account authentication, spectator mode, trading market, navy/shipyards, or full visual asset optimization yet. The dice have actual client-side rigid-body physics and player-directed throws, but the server determines trusted outcomes, so pushing the dice does not let a client manipulate resource or combat odds.
+**Important limitations**: No permanent saved matches, account authentication, spectator mode, trading market, navy/shipyards, or full visual asset optimization yet. The dice use rigid-body physics on both client and server. Your throw direction influences the server simulation, while secret randomized spin/orientation keeps rolls unpredictable and prevents clients from simply submitting a desired face. The dice are currently confined to the physical inset rolling tray; dragging across the entire hex map is not yet implemented.
