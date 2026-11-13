@@ -34,6 +34,11 @@ export function rollPhysics(count=2,throwInfo=null){
  staticBox([.2,.48,3.25],[2.07,.16,0]);
  staticBox([4.25,.48,.2],[0,.16,-1.59]);
  staticBox([4.25,.48,.2],[0,.16,1.59]);
+ // Tall, invisible catch walls keep high-energy throws inside the map-edge tray.
+ staticBox([.2,3.4,3.25],[-2.07,1.65,0]);
+ staticBox([.2,3.4,3.25],[2.07,1.65,0]);
+ staticBox([4.25,3.4,.2],[0,1.65,-1.59]);
+ staticBox([4.25,3.4,.2],[0,1.65,1.59]);
  const gain=Math.min(1.8,Math.max(.6,Math.hypot(sx,sy)*3));
  const bodies=[];
  for(let i=0;i<count;i++){
