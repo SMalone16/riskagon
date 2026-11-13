@@ -207,6 +207,16 @@ export class Board{
    }
    const nature=new THREE.Group();nature.position.set(tile.condensed?-.38:0,0,tile.condensed?-.32:-.08);nature.scale.setScalar(tile.condensed?.34:1.2);top.add(nature);
    decor(nature,tile.terrain);
+   if(tile.terrain==='river'&&tile.bridge){
+    const bridge=new THREE.Group();top.add(bridge);
+    box(bridge,0x876343,1.5,.12,.56,0,.16,0);
+    for(const z of [-.27,.27]){
+      for(let j=-3;j<=3;j++)box(bridge,0xc3a374,.17,.10,.12,j*.20,.25,z);
+      box(bridge,0x553f32,1.36,.07,.07,0,.38,z);
+    }
+    const color=FACTIONS[(options.players||[]).find(p=>p.id===tile.bridge)?.color]||0xe7cfa2;
+    box(bridge,color,.12,.28,.12,0,.38,0);
+   }
    if(this.kaykit){
     const asset={forest:'decoration/nature/trees_A_small',mountains:'decoration/nature/mountain_A_grass',hills:'decoration/nature/hills_A'}[tile.terrain];
     if(asset)this.decorateWithPrefab(nature,asset,tile.terrain==='mountains'?.85:1.08);
