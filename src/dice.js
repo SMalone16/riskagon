@@ -156,7 +156,7 @@ export class DiceTray{
   this.throwMotion(speedX,speedY,duration);
   this.running=true;this.element.classList.add('rolling');
   let outcome;
-  try{outcome=await this.onThrow?.();}
+  try{outcome=await this.onThrow?.({vx:speedX,vy:speedY,durationMs:duration});}
   catch(err){this.element.classList.remove('rolling');this.running=false;this.setMode('resource');return;}
   if(!outcome?.dice){this.element.classList.remove('rolling');this.running=false;return;}
   this.result=outcome.dice;
