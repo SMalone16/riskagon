@@ -1,5 +1,6 @@
 
 import {randomInt} from 'node:crypto';
+import {rollPhysics} from './dicePhysics.js';
 export const COLORS=['blue','red','green','yellow'];
 export const RESOURCES=['wood','brick','wheat','sheep','ore'];
 export const RADIUS=5;
@@ -20,7 +21,6 @@ export const COSTS={
 };
 export const RESOURCE_TERRAIN={forest:'wood',hills:'brick',fields:'wheat',pasture:'sheep',mountains:'ore'};
 export const RESOURCE_STRUCTURE={forest:'lumberyard',hills:'quarry',fields:'farm',pasture:'ranch',mountains:'mine'};
-const dice=()=>randomInt(1,7);
 const shuffle=a=>{
  const copy=[...a];for(let i=copy.length-1;i>0;i--){const j=randomInt(0,i+1);[copy[i],copy[j]]=[copy[j],copy[i]];}return copy;
 };
@@ -109,8 +109,10 @@ export function points(g,id){
 function diceBattle(aCount,dCount,bonusA=0,bonusD=0){
  let a=aCount,d=dCount;const rounds=[];
  for(let turns=0;a>0&&d>0&&turns<100;turns++){
-  const as=Array.from({length:Math.min(3,a)},dice).sort((x,y)=>y-x);
-  const ds=Array.from({length:Math.min(2,d)},dice).sort((x,y)=>y-x);
+  const attackerCount=Math.min(3,a),defenderCount=Math.min(2,d);
+  const rolled=rollPhysics(attackerCount+defenderCount);
+  const as=rolled.slice(0,attackerCount).sort((x,y)=>y-x);
+  const ds=rolled.slice(attackerCount).sort((x,y)=>y-x);
   if(bonusA)as[0]=Math.min(6,as[0]+bonusA);
   if(bonusD)ds[0]=Math.min(6,ds[0]+bonusD);
   let lostA=0,lostD=0;
@@ -126,8 +128,8 @@ export function perform(room,id,action){
  const t=action?.type;
  if(t==='roll'){
   if(g.rolled)throw Error('Already rolled this turn.');
-  // Server chooses the trusted outcome; browser simulates the physical dice and settles to it.
-  const d=[dice(),dice()],sum=d[0]+d[1];
+  // Server physically simulates the throw and reads the two uppermost faces.
+  const d=rollPhysics(2,action.throw),sum=d[0]+d[1];
   g.rolled=true;g.lastRoll={dice:d,sum};
   for(const tile of g.tiles){
    if(tile.number!==sum||!tile.owner)continue;
