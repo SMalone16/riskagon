@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {makeTroop} from './troops.js';
 
 const SQRT3=Math.sqrt(3);
 const FACTIONS={blue:0x4b9eec,red:0xeb756b,green:0x65c5a2,yellow:0xf1c36d};
@@ -10,7 +11,9 @@ const TERRAIN={
   pasture:{top:0x91bb78,side:0x608955},
   hills:{top:0xc78a67,side:0x9c654d},
   mountains:{top:0x9ba7a9,side:0x707e82},
-  desert:{top:0xe3c48e,side:0xb08f66}
+  desert:{top:0xe3c48e,side:0xb08f66},
+  lake:{top:0x4f9eab,side:0x337784},
+  river:{top:0x73b4c3,side:0x3c8295}
 };
 const pos=t=>new THREE.Vector3(SQRT3*(t.q+t.r/2),0,1.5*t.r);
 const makeMat=(color,roughness=.94)=>new THREE.MeshStandardMaterial({color,roughness,flatShading:true});
@@ -50,7 +53,11 @@ function decor(parent,terrain){
     mesh(new THREE.IcosahedronGeometry(.16,0),makeMat(0xc5d7a3),parent,.38*Math.cos(a),.17,.34*Math.sin(a));
    }
  }else if(terrain==='hills'){rock(parent,-.25,.02,1.16);rock(parent,.21,-.18,.88);rock(parent,.23,.30,.65);}
- else if(terrain==='desert'){
+ else if(terrain==='lake'||terrain==='river'){
+   const water=mesh(new THREE.CylinderGeometry(.88,.88,.015,6),makeMat(terrain==='lake'?0x58a7b7:0x7cc1cc,.38),parent,0,.035,0);
+   water.castShadow=false;
+   for(let i=0;i<3;i++)box(parent,0xc5e8da,.17,.012,.025,(i-1)*.34,.045,i%2?.21:-.20);
+ }else if(terrain==='desert'){
    const dune=mesh(new THREE.SphereGeometry(.4,9,5),makeMat(0xf1d6a5),parent,-.12,-.11,-.12);
    dune.scale.set(1,.37,.8);
    rock(parent,.31,.25,.43);
@@ -100,7 +107,7 @@ export class Board{
   this.scene=new THREE.Scene();this.scene.background=new THREE.Color(0x9cbdb6);
   this.scene.fog=new THREE.FogExp2(0x9cbdb6,.012);
   this.camera=new THREE.OrthographicCamera(-9,9,7,-7,.1,100);
-  this.camera.position.set(12,17,19);this.camera.lookAt(0,0,0);
+  this.camera.position.set(18,24,28);this.camera.lookAt(0,0,0);
   this.renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});
   this.renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
   this.renderer.shadowMap.enabled=true;this.renderer.shadowMap.type=THREE.PCFSoftShadowMap;
@@ -111,17 +118,17 @@ export class Board{
   this.controls=new OrbitControls(this.camera,this.renderer.domElement);
   this.controls.enableDamping=true;this.controls.dampingFactor=.07;
   this.controls.enableRotate=true;this.controls.maxPolarAngle=Math.PI*.44;this.controls.minPolarAngle=Math.PI*.22;
-  this.controls.minZoom=.68;this.controls.maxZoom=1.9;this.controls.mouseButtons.RIGHT=THREE.MOUSE.PAN;
+  this.controls.minZoom=.6;this.controls.maxZoom=3.5;this.controls.mouseButtons.RIGHT=THREE.MOUSE.PAN;
   this.scene.add(new THREE.HemisphereLight(0xdaf1ff,0x4c5645,2.5));
   const sun=new THREE.DirectionalLight(0xffedd0,3.0);sun.position.set(-8,16,10);
   sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
   sun.shadow.camera.left=-12;sun.shadow.camera.right=12;sun.shadow.camera.top=12;sun.shadow.camera.bottom=-12;
   sun.shadow.normalBias=.02;this.scene.add(sun);
   this.world=new THREE.Group();this.scene.add(this.world);
-  const sea=mesh(new THREE.CircleGeometry(22,96),makeMat(0x5d9f9e,.75),this.world,0,-.51,0);
+  const sea=mesh(new THREE.CircleGeometry(30,96),makeMat(0x5d9f9e,.75),this.world,0,-.51,0);
   sea.rotation.x=-Math.PI/2;sea.receiveShadow=true;sea.castShadow=false;
-  const rim=mesh(new THREE.CylinderGeometry(5.6,5.8,.23,64),makeMat(0x405f57),this.world,0,-.35,0);
-  rim.scale.set(1,.5,.85);rim.castShadow=false;
+  const rim=mesh(new THREE.CylinderGeometry(12.2,12.6,.23,64),makeMat(0x405f57),this.world,0,-.35,0);
+  rim.scale.set(1,.5,.91);rim.castShadow=false;
   this.board=new THREE.Group();this.world.add(this.board);
   this.pickables=[];this.ray=new THREE.Raycaster();this.pointer=new THREE.Vector2();
   this.loader=new GLTFLoader();this.models=new Map();this.kaykit=false;this.version=0;
@@ -151,7 +158,7 @@ export class Board{
  }
  resize(){
   const w=Math.max(1,this.container.clientWidth),h=Math.max(1,this.container.clientHeight);
-  const size=6.25,aspect=w/h;
+  const size=13.0,aspect=w/h;
   this.camera.left=-size*aspect;this.camera.right=size*aspect;
   this.camera.top=size;this.camera.bottom=-size;
   this.camera.updateProjectionMatrix();this.renderer.setSize(w,h);
@@ -174,6 +181,11 @@ export class Board{
    holder.clear();model.scale.setScalar(scale);holder.add(model);
   });
  }
+ focus(id){
+  const tile=this.tiles.find(t=>t.id===id);if(!tile)return;
+  const target=pos(tile);this.controls.target.copy(target);this.camera.position.copy(target).add(new THREE.Vector3(13,19,23));this.camera.zoom=Math.min(2.45,this.camera.zoom*1.7);this.camera.updateProjectionMatrix();this.controls.update();
+ }
+ reset(){this.controls.target.set(0,0,0);this.camera.position.set(18,24,28);this.camera.zoom=1;this.camera.updateProjectionMatrix();this.controls.update();}
  update(tiles=[],options={}){
   this.version++;this.tiles=tiles;this.options=options;
   this.board.clear();this.pickables=[];
@@ -193,13 +205,13 @@ export class Board{
     const line=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0xffecac}));
     top.add(line);
    }
-   const nature=new THREE.Group();nature.position.set(0,0,-.08);top.add(nature);
+   const nature=new THREE.Group();nature.position.set(tile.condensed?-.38:0,0,tile.condensed?-.32:-.08);nature.scale.setScalar(tile.condensed?.34:1.2);top.add(nature);
    decor(nature,tile.terrain);
    if(this.kaykit){
     const asset={forest:'decoration/nature/trees_A_small',mountains:'decoration/nature/mountain_A_grass',hills:'decoration/nature/hills_A'}[tile.terrain];
     if(asset)this.decorateWithPrefab(nature,asset,tile.terrain==='mountains'?.85:1.08);
    }
-   if(tile.number!==null){
+   if(tile.number!==null && tile.number!==undefined){
     const token=textSprite(String(tile.number),tile.number===6||tile.number===8?'#a43b32':'#494332','#f7e9cd',.44);
     token.position.set(-.62,.16,.45);top.add(token);
    }
@@ -214,18 +226,40 @@ export class Board{
      const rel='buildings/'+(player?.color||'blue')+'/building_'+(tile.building===2?'castle':'home_A')+'_'+(player?.color||'blue');
      this.decorateWithPrefab(holder,rel,tile.building===2?.66:.89);
     }
-    const army=new THREE.Group();army.position.set(tile.building?.32:0,0,tile.building?.12:0);top.add(army);
-    soldier(army,color,-.23,-.13,.8);
-    if(tile.army>2)soldier(army,color,.12,-.22,.7);
-    if(tile.army>5)soldier(army,color,-.02,.15,.65);
+    if(tile.structures?.length>1){
+      const addOn=new THREE.Group();top.add(addOn);
+      let n=0;
+      for(const kind of tile.structures.filter(x=>x!=='outpost')){
+       const angle=(n++)*Math.PI*.57+.7;
+       const x=.52*Math.cos(angle),z=.52*Math.sin(angle);
+       const structure=new THREE.Group();structure.position.set(x,0,z);structure.scale.setScalar(.47);addOn.add(structure);
+       if(kind==='walls'){for(let j=-1;j<=1;j++)box(structure,0xa7aca7,.32,.25,.18,j*.36,.13,0);}
+       else if(kind==='farm'||kind==='lumberyard'||kind==='quarry'||kind==='mine'||kind==='ranch'){
+        box(structure,0xe8d8ae,.53,.28,.40,0,.15,0);
+        cone(structure,kind==='farm'?0xe9c778:color,.42,.30,0,.42,0,4).rotation.y=Math.PI/4;
+       }else{
+        box(structure,0xded7b7,.5,.43,.42,0,.23,0);
+        cone(structure,color,.40,.34,0,.61,0,4).rotation.y=Math.PI/4;
+       }
+      }
+    }
+    const army=new THREE.Group();army.position.set(tile.building?.25:0,0,tile.building?.12:0);top.add(army);
+    army.add(makeTroop(color,'infantry',.48));army.children.at(-1).position.set(-.2,0,-.15);
+    if(tile.army>2){const troop=makeTroop(color,'archer',.41);troop.position.set(.16,0,-.21);army.add(troop);}
+    if(tile.army>5){const troop=makeTroop(color,tile.structures?.includes('stables')?'cavalry':'infantry',.38);troop.position.set(-.03,0,.20);army.add(troop);}
     const count=textSprite(String(tile.army),'#fff','#273c4a',.35);
     count.position.set(.52,.24,.51);top.add(count);
    }
+   const own=tile.owner===options.myId;
    const ownerBorder=tile.owner?new THREE.Mesh(
-    new THREE.TorusGeometry(.79,.025,5,6),
-    makeMat(FACTIONS[(options.players||[]).find(p=>p.id===tile.owner)?.color]||0xffffff)
+    new THREE.TorusGeometry(.79,own?.056:.026,5,6),
+    makeMat(own?0xffe7a2:(FACTIONS[(options.players||[]).find(p=>p.id===tile.owner)?.color]||0xffffff))
    ):null;
    if(ownerBorder){ownerBorder.rotation.x=-Math.PI/2;ownerBorder.rotation.z=Math.PI/6;ownerBorder.scale.set(1.0,1.0,1.0);ownerBorder.position.y=.012;top.add(ownerBorder);}
+   if(options.spawnChoices?.includes(tile.id)){
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(.77,.085,6,6),makeMat(0xffd581));ring.rotation.x=-Math.PI/2;ring.position.y=.15;top.add(ring);
+    const sign=textSprite('★','#3a493d','#f6d78c',.44);sign.position.set(0,.8,0);top.add(sign);
+   }
   }
   const shownEdges=new Set();
   for(const tile of tiles){
@@ -239,8 +273,9 @@ export class Board{
     const a=pos(tile),b=pos(other),mid=a.clone().add(b).multiplyScalar(.5);
     const direction=new THREE.Vector3(-(b.z-a.z),0,b.x-a.x).normalize();
     const owner=options.roads?.[edge];
-    if(!owner&&!roadMode)continue;
-    const color=owner?(FACTIONS[(options.players||[]).find(p=>p.id===owner)?.color]||0xb38a5e):0xe5cb96;
+    const eligible=roadMode&&(tile.owner===options.myId||other.owner===options.myId)&&!['lake','river'].includes(tile.terrain)&&!['lake','river'].includes(other.terrain);
+    if(!owner&&!eligible)continue;
+    const color=owner?(FACTIONS[(options.players||[]).find(p=>p.id===owner)?.color]||0xb38a5e):0xffe09b;
     const road=mesh(new THREE.BoxGeometry(1.13,.10,owner?.21:.13),makeMat(color),this.board,mid.x,.29,mid.z);
     road.quaternion.setFromUnitVectors(new THREE.Vector3(1,0,0),direction);
     if(owner){
@@ -250,7 +285,8 @@ export class Board{
        sleeper.quaternion.copy(road.quaternion);
       }
     }else{road.material.transparent=true;road.material.opacity=.5;}
-    if(roadMode){
+    if(eligible){
+     const plus=textSprite('+','#4a4a38','#fff0b4',.28);plus.position.set(mid.x,.7,mid.z);this.board.add(plus);
      const hitbox=new THREE.Mesh(new THREE.BoxGeometry(1.3,.21,.40),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));
      hitbox.position.set(mid.x,.48,mid.z);hitbox.quaternion.copy(road.quaternion);
      hitbox.userData.edge=edge;this.board.add(hitbox);this.pickables.push(hitbox);
