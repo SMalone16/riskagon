@@ -2,6 +2,7 @@
 import express from 'express';
 import {createServer} from 'node:http';
 import {Server} from 'socket.io';
+import {chooseBotAction} from './bot.js';
 import {randomBytes} from 'node:crypto';
 import {newRealm,currentDrafter,chooseDraft,perform,finishRoll,forPlayer,adjacent,dist,COLORS} from './realm.js';
 const app=express(),server=createServer(app),io=new Server(server,{maxHttpBufferSize:100_000});
@@ -45,22 +46,17 @@ function scheduleBot(room){
      })[0];
     chooseDraft(room,id,now.draftStage,value);
    }else if(now.phase==='playing'){
-    if(!now.rolled){perform(room,id,{type:'roll'});advance(room);return;}
-    if((now.reinforcements[id]||0)>0){
-     const home=now.tiles.find(t=>t.owner===id&&(t.army>0||t.building)&&!['lake','river'].includes(t.terrain));
-     if(home)perform(room,id,{type:'deploy',tile:home.id,count:now.reinforcements[id]});
-    }
-    const move=now.tiles.filter(t=>t.owner===id&&t.army>1)
-      .flatMap(t=>now.tiles.filter(u=>adjacent(t,u)&&!u.owner&&u.terrain!=='lake'&&(u.terrain!=='river'||u.bridge===id)).map(u=>({from:t,to:u})))
-      .sort((a,b)=>b.from.army-a.from.army)[0];
-    if(move)perform(room,id,{type:'march',from:move.from.id,to:move.to.id,amount:Math.max(1,move.from.army-1)});
-    perform(room,id,{type:'end'});
+    const key=now.round+':'+now.turn;
+    if(room.botContext?.key!==key)room.botContext={key,builds:0};
+    const action=chooseBotAction(room,room.botContext);
+    if(action){perform(room,id,action);if(['build','dock','launch'].includes(action.type))room.botContext.builds++;}
+
    }
   }catch(error){console.error('Bot action:',error.message);try{if(now.phase==='playing'&&now.rolled)perform(room,id,{type:'end'});}catch{}}
   advance(room);
- },650);
+ },Number(process.env.BOT_DELAY_MS)||1600);
 }
-app.get('/api/health',(_req,res)=>res.json({ok:true,rooms:rooms.size,app:'riskagon',version:'0.3.0'}));
+app.get('/api/health',(_req,res)=>res.json({ok:true,rooms:rooms.size,app:'riskagon',version:'0.4.0'}));
 io.on('connection',socket=>{
  socket.on('room:create',({id,name}={},reply=()=>{})=>{
   id=clean(id);name=clean(name)||'Commander';
@@ -133,4 +129,4 @@ if(process.env.NODE_ENV==='production'){
  app.use(vite.middlewares);
 }
 const port=process.env.PORT===undefined?3000:Number(process.env.PORT);
-server.listen(port,'0.0.0.0',()=>console.log('Riskagon v0.3 at http://localhost:'+server.address().port));
+server.listen(port,'0.0.0.0',()=>console.log('Riskagon v0.4 at http://localhost:'+server.address().port));

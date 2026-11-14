@@ -561,3 +561,51 @@ dialog .primary{
     max-width:160px
   }
 }
+/* The command dock reserves its own space; the canvas never sits behind a menu. */
+.map{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.playfield{position:relative;flex:1;min-height:220px;overflow:hidden}
+.context{position:relative;left:auto;bottom:auto;transform:none;width:100%;max-height:34dvh;flex-shrink:0;overflow:auto;border-radius:0;padding:12px 22px;box-shadow:none;gap:9px;background:#173337;border-top:1px solid #d4c9a366}
+.context h2{font-size:17px}
+.context .context-heading{font-size:12px}
+.context .province{padding:0 35px 7px 0;display:flex;flex-direction:row;gap:15px;align-items:center}
+.context .province small{font-size:12px}
+.context .actions{display:flex;flex-wrap:wrap}
+.context .actions button{flex:0 1 auto}
+.context .turn-end{position:relative;justify-content:flex-end;padding-top:7px}
+.context .quantity{position:absolute;bottom:19px;left:22px;max-width:55%}
+.context .builder{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:7px}
+.builder h2{grid-column:1/-1}
+.context .recipe{min-height:82px;padding:9px}
+.activity{min-height:27px;padding:5px 22px;background:#112b30;color:#bcd2c7;font-size:12px;border-top:1px solid #ffffff16}
+.activity:empty{display:none}
+.deployment-head{display:flex;gap:20px;align-items:baseline;flex-wrap:wrap}
+.deployment-head small{font-size:12px;color:#d2dac8}
+.deployment-actions{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.deployment-actions>.primary{margin-left:auto}
+.allocation-stepper{display:flex;align-items:center;gap:12px}
+.allocation-stepper button{font-size:24px;width:43px;padding:0;min-height:40px}
+.allocation-stepper output{min-width:80px;text-align:center;color:#ffe0a1;font-size:17px}
+.your-turn{border-color:#f7d58d;box-shadow:0 0 0 3px #e4bf6e24,0 5px 20px #14352c30}
+.your-turn b{font-size:15px}
+.map-tools{top:72px}
+.map-guide{bottom:12px;font-size:10px}
+.context .color-draft,.context .draft-options{display:flex;flex-wrap:wrap}
+@media(max-width:600px){
+ .map{height:calc(100dvh - 56px)}
+ .context{max-height:38dvh;padding:10px 12px;gap:7px}
+ .context .province{flex-direction:column;align-items:flex-start;gap:3px}
+ .context .quantity{position:static;max-width:none}
+ .context .actions button{font-size:11px;padding:7px 9px;min-height:36px}
+ .context .turn-end{padding-top:5px}
+ .deployment-actions{gap:8px}.deployment-head{gap:4px}
+ .deployment-actions>small{width:100%;font-size:10px}
+ .deployment-actions>.primary{margin-left:0}
+ .map-tools{top:87px}.activity{padding:4px 12px;font-size:11px}
+}
+/* Keep the projection steady as selection and order modes change. */
+.context{height:180px;flex:0 0 180px;max-height:36dvh;gap:6px}
+.context>button{align-self:flex-start}
+.context .turn-end{margin-top:auto}
+.context .builder{padding-bottom:8px}
+@media(max-width:600px){.context{height:205px;flex-basis:205px;max-height:40dvh}}
+.activity:empty{display:block}
