@@ -1,4 +1,5 @@
 
+import {borderBetween} from '../shared/edges.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {newRealm,chooseDraft,currentDrafter,perform,finishRoll,reinforcementIncome,troopOutput,visibility,forPlayer,dist,edgeId,adjacent,points,COSTS,RESOURCE_TERRAIN,RADIUS} from './realm.js';
@@ -71,12 +72,13 @@ test('road must follow a legal shared land border and exposes farther territory'
  const neighbor=g.tiles.find(t=>!t.owner&&adjacent(t,home)&&RESOURCE_TERRAIN[t.terrain]);
  assert.ok(neighbor);
  roll(room,p.id);
+ neighbor.owner=p.id;neighbor.army=1;
  const edge=edgeId(home.id,neighbor.id);
- const ownedBefore=Object.keys(g.roads).length;
+ const ownedBefore=Object.keys(g.borders).length;
  perform(room,p.id,{type:'road',edge});
- assert.equal(Object.keys(g.roads).length,ownedBefore+1);
- assert.equal(g.roads[edge],p.id);
- assert.throws(()=>perform(room,p.id,{type:'road',edge}),/already has a road/);
+ assert.equal(Object.keys(g.borders).length,ownedBefore+1);
+ assert.equal(g.borders[borderBetween(home,neighbor)].road,p.id);
+ assert.throws(()=>perform(room,p.id,{type:'road',edge}),/already exists/);
  const visible=visibility(g,p.id);
  assert.ok(visible.visible.has(neighbor.id));
 });

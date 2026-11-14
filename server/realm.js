@@ -1,4 +1,7 @@
 
+import {frontierAction,answerTrade,tavernRate,wallOn} from './frontier.js';
+import {prepareMovement,ready} from './movement.js';
+import {hexEdges,borderBetween} from '../shared/edges.js';
 import {randomInt} from 'node:crypto';
 import {rollPhysics,simulateRoll} from './dicePhysics.js';
 import {NAVAL_COSTS,isWater,coastal,performNaval} from './naval.js';
@@ -64,11 +67,12 @@ export function generateMap(){
  const numberBag=shuffle([2,12,...Array(18).fill([3,4,5,6,8,9,10,11]).flat()].flat());
  const candidates=cells.filter(t=>RESOURCE_TERRAIN[t.terrain]);
  candidates.forEach((t,i)=>{t.number=numberBag[i%numberBag.length];});
+ for(const t of shuffle(cells.filter(t=>RESOURCE_TERRAIN[t.terrain])).slice(0,4))t.tavern=true;
  return cells;
 }
 const choices=()=>['-5,0','5,0','0,-5','0,5','-5,5','5,-5','-3,-2','3,2'];
 export function newRealm(players){
- return {phase:'draft',draftStage:'color',draftOrder:players.map(p=>p.id),draftIndex:0,spawnChoices:choices(),tiles:generateMap(),roads:{},turn:0,round:1,rolled:false,turnStage:'roll',lastRoll:null,lastBattle:null,mobilityUsed:0,reinforcements:{},productionReserve:{},allocations:{},discovered:{},events:[],eventSeq:0,pendingDice:null,winner:null,log:['Color draft is open. Choose a banner.']};
+ return {phase:'draft',draftStage:'color',draftOrder:players.map(p=>p.id),draftIndex:0,spawnChoices:choices(),tiles:generateMap(),roads:{},borders:{},movement:{},trade:null,provoked:{},turn:0,round:1,rolled:false,turnStage:'roll',lastRoll:null,lastBattle:null,mobilityUsed:0,reinforcements:{},productionReserve:{},allocations:{},discovered:{},events:[],eventSeq:0,pendingDice:null,winner:null,log:['Color draft is open. Choose a banner.']};
 }
 export function currentDrafter(room){
  const g=room.game;if(!g||g.phase!=='draft')return null;
@@ -88,7 +92,7 @@ export function chooseDraft(room,id,kind,value){
   if(kind!=='spawn'||!g.spawnChoices.includes(value))throw Error('Pick one of the glowing spawn hexes.');
   const tile=tileAt(g,value);
   if(!tile||tile.owner||['lake','river'].includes(tile.terrain))throw Error('That starting location is not available.');
-  tile.owner=id;tile.army=3;tile.building=1;tile.structures=['outpost'];
+  p.home=tile.id;tile.owner=id;tile.army=3;tile.building=1;tile.structures=['outpost'];
   p.resources={wood:1,brick:1,wheat:1,sheep:1,ore:0};
   g.spawnChoices=g.spawnChoices.filter(x=>x!==value);
   g.log.unshift(p.name+' claimed a starting outpost.');
@@ -153,7 +157,7 @@ export function finishRoll(room,now=Date.now()){
   if(g.round>1&&owner&&resource)g.productionReserve[owner.id]=(g.productionReserve[owner.id]||0)+troopOutput(tile);
   if(tile.structures.includes('walls'))tile.ward=Math.min(3,tile.ward+1);
   if(tile.structures.includes('armory'))tile.attackStock=Math.min(3,tile.attackStock+1);
-  if(tile.structures.includes('stables')&&owner)owner.storedMobility=Math.min(2,(owner.storedMobility||0)+1);
+
  }
  g.income=reinforcementIncome(g,p.id,null);
  g.income.production=g.productionReserve[p.id]||0;
@@ -184,9 +188,9 @@ function performAction(room,id,action){
   if(g.turnStage!=='orders')throw Error('Finish rolling and place all reinforcements before ending your turn.');
   g.turn=(g.turn+1)%room.players.length;if(g.turn===0)g.round++;
   g.rolled=false;g.turnStage='roll';g.lastRoll=null;g.lastBattle=null;g.income=null;
-  g.mobilityUsed=0;
+  g.mobilityUsed=0;g.movement={};g.trade=null;
   const next=room.players[g.turn];
-  g.mobilityCap=2+Math.min(2,next.storedMobility||0);
+  g.mobilityCap=2;
   next.storedMobility=0;
   g.reinforcements[next.id]=0;
   g.log.unshift('Round '+g.round+': '+next.name+' prepares their orders.');
@@ -194,18 +198,11 @@ function performAction(room,id,action){
   if(!g.rolled)throw Error('Roll your physical dice before taking actions.');
   if(g.turnStage==='rolling')throw Error('Wait for the dice to settle.');
   if(!['deploy','allocate','confirmDeployment'].includes(t)&&g.turnStage!=='orders')throw Error('Place all reinforcements before movement, combat or building.');
-  if(performNaval(g,p,action,{pay,battle:diceBattle})){
+  if(frontierAction(room,id,action)){
+   g.log.unshift(p.name+' developed the frontier.');
+  }else if(performNaval(g,p,action,{pay,battle:diceBattle})){
    if(g.lastBattle?.defender){const defender=room.players.find(x=>x.id===g.lastBattle.defender);if(defender)g.lastBattle.defender=defender.name;}
    g.log.unshift(p.name+' issued naval orders.');
-  }else if(t==='road'){
-   const pieces=String(action.edge||'').split('|');
-   if(pieces.length!==2||edgeId(...pieces)!==action.edge)throw Error('Invalid road edge.');
-   const a=tileAt(g,pieces[0]),b=tileAt(g,pieces[1]);
-   if(!a||!b||!adjacent(a,b))throw Error('Roads must follow a shared hex edge.');
-   if(g.roads[action.edge])throw Error('This edge already has a road.');
-   if(![a,b].some(x=>x.owner===id))throw Error('Build a road from your own territory.');
-   if(['lake','river'].includes(a.terrain)||['lake','river'].includes(b.terrain))throw Error('Water crossings require bridges (or future naval docks).');
-   pay(p,COSTS.road);g.roads[action.edge]=id;g.log.unshift(p.name+' laid a border road.');
   }else if(t==='bridge'){
    const tile=tileAt(g,action.tile);
    if(!tile||tile.terrain!=='river'||tile.bridge)throw Error('Choose an unbridged river hex.');
@@ -260,9 +257,11 @@ function performAction(room,id,action){
    if(!Number.isSafeInteger(count)||count<1||count>=from.army)throw Error('Keep at least one soldier at home.');
    if(to.terrain==='lake')throw Error('Use a boat and a dock to cross the lake.');
    if(to.terrain==='river'&&to.bridge!==id)throw Error('Construct a bridge before crossing this river.');
-   const road=g.roads[edgeId(from.id,to.id)]===id;
+   const road=g.borders?.[borderBetween(from,to)]?.road===id||g.roads[edgeId(from.id,to.id)]===id;
    const mobilityCost=road?0.5:1;
-   if(g.mobilityUsed+mobilityCost>(g.mobilityCap||2))throw Error('No movement points left.');
+   const border=wallOn(g,from,to);
+   if(border?.wall&&border.wall.owner!==id&&!(border.gate?.owner===id)){border.wall.hp-=Math.min(3,count);if(border.wall.hp<=0)delete border.wall;return;}
+   if(border?.wall&&border.wall.owner===id&&!border.gate)throw Error('Build a gate to cross your wall.');
    const battle=to.owner&&to.owner!==id?diceBattle(count,to.army,(road?1:0)+(from.attackStock>0?1:0),(to.structures.includes('walls')?1:0)+(to.ward>0?1:0)):null;
    g.mobilityUsed+=mobilityCost;g.lastBattle=null;
    if(to.owner===id){from.army-=count;to.army+=count;g.log.unshift(p.name+' moved '+count+' soldiers.');}
@@ -291,7 +290,7 @@ function performAction(room,id,action){
  }
  g.log=g.log.slice(0,20);
 }
-const actionLabels={roll:'rolled the dice',end:'ended their turn',deploy:'placed troops',confirmDeployment:'placed troops',allocate:'planned reinforcements',build:'built one structure',road:'built one road',bridge:'built one bridge',march:'moved troops',launch:'launched a boat',embark:'embarked troops',sail:'moved a fleet',bombard:'bombarded a garrison',land:'landed troops',dock:'built a dock'};
+const actionLabels={edgeWall:'built one wall',gate:'built one gate',offerTrade:'proposed a trade',tavernTrade:'traded at a tavern',roll:'rolled the dice',end:'ended their turn',deploy:'placed troops',confirmDeployment:'placed troops',allocate:'planned reinforcements',build:'built one structure',road:'built one road',bridge:'built one bridge',march:'moved troops',launch:'launched a boat',embark:'embarked troops',sail:'moved a fleet',bombard:'bombarded a garrison',land:'landed troops',dock:'built a dock'};
 function discover(room){
  for(const p of room.players)room.game.discovered[p.id]=[...new Set([...(room.game.discovered[p.id]||[]),...visibility(room.game,p.id).visible])];
 }
@@ -304,21 +303,30 @@ function publicEvent(event,id){
 }
 export function perform(room,id,action){
  const g=room.game;
+ if(['acceptTrade','rejectTrade'].includes(action?.type)){answerTrade(room,id,action);g.events.push({seq:++g.eventSeq,at:Date.now(),actor:id,type:action.type,summary:room.players.find(p=>p.id===id).name+(action.type==='acceptTrade'?' accepted a trade.':' declined a trade.'),audience:{}});g.events=g.events.slice(-50);return;}
+ if(g?.phase!=='playing'||room.players[g.turn]?.id!==id)throw Error('Not your turn.');
+ if(action?.type==='road'&&action.edge?.includes('|')){const [a,b]=action.edge.split('|').map(k=>g.tiles.find(t=>t.id===k));if(a&&b)action={...action,edge:borderBetween(a,b)};}
+ const from=g?.tiles.find(t=>t.id===action?.from),to=g?.tiles.find(t=>t.id===action?.to);
+ const previousOwner=to?.owner,siege=from&&to&&['march','land'].includes(action.type)&&wallOn(g,from,to)?.wall?.owner&&wallOn(g,from,to).wall.owner!==id;
+ const moved=prepareMovement(g,{...action,road:from&&to&&(g.borders?.[borderBetween(from,to)]?.road===id||g.roads[edgeId(from.id,to.id)]===id)});
  const before=g?Object.fromEntries(room.players.map(p=>[p.id,[...visibility(g,p.id).visible]])):{};
- performAction(room,id,action);
+ performAction(room,id,action);moved();
+ if(['bombard','march','land'].includes(action.type)&&previousOwner&&previousOwner!==id)g.provoked[previousOwner]=id;
  discover(room);
  if(action.type==='allocate')return; // Draft allocations stay private until the player confirms.
  const actor=room.players.find(p=>p.id===id);
  const audience=Object.fromEntries(room.players.map(p=>[p.id,[...new Set([...(before[p.id]||[]),...visibility(g,p.id).visible])]]));
  const event={seq:++g.eventSeq,at:Date.now(),actor:id,type:action.type,summary:actor.name+' '+(actionLabels[action.type]||'issued orders')+'.',
   from:action.from||null,to:action.to||action.tile||null,amount:action.amount||action.count||null,kind:action.kind||null,audience};
- if(action.type==='road'){const ids=action.edge.split('|');event.from=ids[0];event.to=ids[1];}
+
+ if(siege){event.type='siege';event.summary=actor.name+' attacked a wall.';}
  g.events.push(event);g.events=g.events.slice(-50);
 }
 export function visibility(g,id){
  const visible=new Set(),numbers=new Set(),tiles=g.tiles;
  const owned=tiles.filter(t=>t.owner===id&&(t.army>0||t.building||t.navy>0||t.boats>0));
- const ownedRoads=Object.entries(g.roads).filter(([,owner])=>owner===id).map(([key])=>key.split('|')).flat().map(x=>tileAt(g,x)).filter(Boolean);
+ const borderRoads=Object.entries(g.borders||{}).filter(([,b])=>b.road===id).flatMap(([key])=>tiles.filter(t=>hexEdges(t).some(e=>e.key===key)));
+ const ownedRoads=borderRoads.concat(Object.entries(g.roads).filter(([,owner])=>owner===id).map(([key])=>key.split('|')).flat().map(x=>tileAt(g,x)).filter(Boolean));
  for(const t of tiles){
   if(owned.some(source=>dist(source,t)<=1)||owned.some(source=>source.structures.length>1&&dist(source,t)<=2)||ownedRoads.some(source=>dist(source,t)<=2))visible.add(t.id);
   if(owned.some(source=>dist(source,t)<=5))numbers.add(t.id);
@@ -327,12 +335,12 @@ export function visibility(g,id){
 }
 export function forPlayer(room,id){
  const g=room.game;
- const players=room.players.map(p=>({id:p.id,name:p.name,color:p.color,bot:p.bot,connected:p.connected,resources:p.id===id?p.resources:null}));
+ const players=room.players.map(p=>({id:p.id,name:p.name,color:p.color,profile:p.profile,bot:p.bot,connected:p.connected,resources:p.id===id?p.resources:null}));
  if(!g)return {code:room.code,host:room.host,players,game:null};
  const view=visibility(g,id);
  const tiles=g.tiles.map(t=>{
   const isSeen=t.owner===id||view.visible.has(t.id);
-  return {...t,number:view.numbers.has(t.id)?t.number:null,numberHidden:t.number!==null&&!view.numbers.has(t.id),
+  return {...t,tavern:!!t.tavern&&isSeen,tavernRates:t.tavern&&isSeen?Object.fromEntries(RESOURCES.map(r=>[r,tavernRate(g,t,r)])):null,moveReady:t.owner===id?{army:ready(g,t,'army',1),fastArmy:ready(g,t,'army',.5),navy:ready(g,t,'navy',.5)}:null,number:view.numbers.has(t.id)?t.number:null,numberHidden:t.number!==null&&!view.numbers.has(t.id),
    owner:isSeen?t.owner:null,army:isSeen?t.army:0,building:isSeen?t.building:0,structures:isSeen?[...t.structures]:[],ward:isSeen?t.ward:0,attackStock:isSeen?t.attackStock:0,
    navy:isSeen?t.navy:0,boats:isSeen?t.boats:0,visible:isSeen,discovered:(g.discovered[id]||[]).includes(t.id)||isSeen,condensed:isSeen,masked:!isSeen,bridge:isSeen?t.bridge:false};
  });
@@ -341,7 +349,7 @@ export function forPlayer(room,id){
   const ids=edge.split('|');
   if(owner===id||ids.some(x=>view.visible.has(x)))roads[edge]=owner;
  }
- return {code:room.code,host:room.host,players,game:{...g,tiles,roads,serverNow:Date.now(),discovered:g.discovered[id]||[...view.visible],allocations:{[id]:{...g.allocations[id]}},events:g.events.map(e=>publicEvent(e,id)),log:g.events.length?[...g.events].reverse().map(e=>e.summary):g.log,reinforcements:{[id]:g.reinforcements[id]||0},productionReserve:{[id]:g.productionReserve[id]||0},income:room.players[g.turn]?.id===id?g.income:null,scores:Object.fromEntries(room.players.map(x=>[x.id,points(g,x.id)])),
+ return {code:room.code,host:room.host,players,game:{...g,tiles,roads,borders:Object.fromEntries(Object.entries(g.borders||{}).filter(([key,b])=>b.road===id||b.wall?.owner===id||g.tiles.some(t=>view.visible.has(t.id)&&hexEdges(t).some(e=>e.key===key)))),movement:undefined,provoked:undefined,trade:g.trade&&(g.trade.from===id||g.trade.to===id)?g.trade:null,serverNow:Date.now(),discovered:g.discovered[id]||[...view.visible],allocations:{[id]:{...g.allocations[id]}},events:g.events.map(e=>publicEvent(e,id)),log:g.events.length?[...g.events].reverse().map(e=>e.summary):g.log,reinforcements:{[id]:g.reinforcements[id]||0},productionReserve:{[id]:g.productionReserve[id]||0},income:room.players[g.turn]?.id===id?g.income:null,scores:Object.fromEntries(room.players.map(x=>[x.id,points(g,x.id)])),
    lastBattle:g.lastBattle&&(g.lastBattle.attacker===players.find(p=>p.id===id)?.name||g.lastBattle.defender===players.find(p=>p.id===id)?.name)?g.lastBattle:null,
    spawnChoices:g.phase==='draft'?g.spawnChoices:[],draftOrder:g.phase==='draft'?g.draftOrder:[]}};
 }

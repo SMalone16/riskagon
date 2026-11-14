@@ -1,3 +1,4 @@
+import {wallOn} from './frontier.js';
 export const NAVAL_COSTS={shipyard:{wood:2,brick:2,ore:1},dock:{wood:2,brick:1},boat:{wood:2,ore:1},cannons:{wood:1,brick:2,ore:2}};
 export const BOAT_CAPACITY=4;
 export const isWater=t=>['lake','river'].includes(t?.terrain);
@@ -5,7 +6,7 @@ const adjacent=(a,b)=>Math.max(Math.abs(a.q-b.q),Math.abs(a.r-b.r),Math.abs(a.q+
 export const coastal=(g,t)=>!isWater(t)&&g.tiles.some(w=>isWater(w)&&adjacent(t,w));
 const integer=(n,min,max)=>Number.isSafeInteger(n)&&n>=min&&n<=max;
 const release=t=>{if(!t.army&&!t.building&&!t.structures.length&&!t.boats&&!t.navy)t.owner=null;};
-const spendMove=g=>{if(g.mobilityUsed+1>(g.mobilityCap||2))throw Error('No movement points left.');};
+const spendMove=g=>{};
 export function performNaval(g,p,action,{pay,battle}){
  const {type}=action;
  if(!['launch','embark','sail','bombard','land','dock'].includes(type))return false;
@@ -42,6 +43,9 @@ export function performNaval(g,p,action,{pay,battle}){
  if(!integer(count,1,from.navy))throw Error('Choose how many naval troops to move.');
  if(type==='land'){
   if(isWater(to)||!to.structures.includes('dock'))throw Error('Naval troops can land only at a dock.');
+  const border=wallOn(g,from,to);
+  if(border?.wall&&border.wall.owner!==p.id){border.wall.hp-=Math.min(3,count);if(border.wall.hp<=0)delete border.wall;return true;}
+  if(border?.wall&&border.wall.owner===p.id&&!border.gate)throw Error('Build a gate to cross your wall.');
   const hostile=to.owner&&to.owner!==p.id;
   const result=hostile?battle(count,to.army,0,to.structures.includes('walls')?1:0):{attackers:count,defenders:0};
   from.navy-=count-result.attackers;

@@ -1,3 +1,4 @@
+import {hexEdges,vertexPosition} from '../shared/edges.js';
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
@@ -180,6 +181,7 @@ export class Board{
   this.renderer.domElement.addEventListener('pointerup',e=>{
     if(!this.pointerDown||Math.hypot(e.clientX-this.pointerDown.x,e.clientY-this.pointerDown.y)>6)return;
     const hit=this.hit(e);if(!hit)return;
+    if(hit.object.userData.vertex){this.selectEdge({vertex:hit.object.userData.vertex});return;}
     if(hit.object.userData.edge){this.selectEdge(hit.object.userData.edge);return;}
     if(hit.object.userData.tile)this.selectTile(hit.object.userData.tile);
   });
@@ -328,6 +330,7 @@ export class Board{
     const token=textSprite(String(tile.number),tile.number===6||tile.number===8?'#a43b32':'#494332','#f7e9cd',.44);
     token.position.set(-.62,.16,.45);top.add(token);
    }
+   if(tile.tavern){const tavern=proceduralBuilding(top,0xc8944e,1);tavern.position.x=-.25;const sign=textSprite('T','#fff','#745132',.5);sign.position.set(0,1.2,0);top.add(sign);}
    if(tile.owner){
     const player=(options.players||[]).find(p=>p.id===tile.owner);
     const color=FACTIONS[player?.color]||FACTIONS.blue;
@@ -380,6 +383,20 @@ export class Board{
     const ring=new THREE.Mesh(new THREE.TorusGeometry(.77,.085,6,6),makeMat(0xffd581));ring.rotation.x=-Math.PI/2;ring.position.y=.15;top.add(ring);
     const sign=textSprite('★','#3a493d','#f6d78c',.44);sign.position.set(0,.8,0);top.add(sign);
    }
+  }
+  const vertices=new Set();
+  if(options.borderMode)for(const tile of tiles.filter(t=>t.owner===options.myId&&(t.army||t.navy)))for(const edge of hexEdges(tile))for(const key of [edge.a,edge.b]){
+   if(vertices.has(key))continue;vertices.add(key);const p=vertexPosition(key);
+   const point=mesh(new THREE.SphereGeometry(.13,10,8),makeMat(options.originVertex===key?0xff8866:0xffed9f),this.board,p.x,.4,p.z);point.userData.vertex=key;this.pickables.push(point);
+  }
+  for(const [key,border] of Object.entries(options.borders||{})){
+   const [a,b]=key.split('~').map(vertexPosition);if(!a||!b)continue;
+   const length=Math.hypot(a.x-b.x,a.z-b.z),angle=Math.atan2(-(b.z-a.z),b.x-a.x);
+   const road=border.road,wall=border.wall,gate=border.gate;
+   if(road){const m=mesh(new THREE.BoxGeometry(length,.06,.16),makeMat(0xc5a473),this.board,(a.x+b.x)/2,.23,(a.z+b.z)/2);m.rotation.y=angle;}
+   if(wall){for(const part of gate?[-1,1]:[0]){const fraction=gate?.30:1,offset=part*.34;const m=mesh(new THREE.BoxGeometry(length*fraction,.48,.16),makeMat(wall.material==='stone'?0x87959d:0x99663f),this.board,(a.x+b.x)/2+(b.x-a.x)*offset,.42,(a.z+b.z)/2+(b.z-a.z)*offset);m.rotation.y=angle;}}
+   if(wall){const hp=textSprite(String(wall.hp),'#fff','#4b5e60',.28);hp.position.set((a.x+b.x)/2,.8,(a.z+b.z)/2);this.board.add(hp);}
+   if(gate){const marker=textSprite('G','#fff','#45715c',.3);marker.position.set((a.x+b.x)/2,.8,(a.z+b.z)/2);this.board.add(marker);}
   }
   const shownEdges=new Set();
   for(const tile of tiles){
