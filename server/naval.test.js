@@ -22,8 +22,8 @@ test('shipyards launch boats, crews respect capacity and boats move through conn
 test('bombardment diminishes garrisons without retaliation unless cannons are present; cannot capture',()=>{
  const r=scenario();fleet(r);const f=r.game.tiles[1],enemy=r.game.tiles[3];
  order(r,'bombard',{from:f.id,to:enemy.id});assert.equal(enemy.army,6);assert.equal(f.navy,4);assert.equal(enemy.owner,r.players[1].id);
- enemy.structures.push('cannons');order(r,'bombard',{from:f.id,to:enemy.id});assert.equal(enemy.army,4);assert.equal(f.navy,2);
- order(r,'bombard',{from:f.id,to:enemy.id});assert.equal(f.navy,0);assert.equal(f.boats,0);
+ r.game.movement={};enemy.structures.push('cannons');order(r,'bombard',{from:f.id,to:enemy.id});assert.equal(enemy.army,4);assert.equal(f.navy,2);
+ r.game.movement={};order(r,'bombard',{from:f.id,to:enemy.id});assert.equal(f.navy,0);assert.equal(f.boats,0);
  assert.throws(()=>order(r,'bombard',{from:f.id,to:enemy.id}),/crewed boat|own territory/);
 });
 test('naval troops land only through docks and boats stay on water',()=>{
@@ -37,7 +37,7 @@ test('naval troops land only through docks and boats stay on water',()=>{
 test('fleet splitting cannot strand troops without boats and naval actions obey reinforcement/mobility locks',()=>{
  const r=scenario();fleet(r);
  assert.throws(()=>order(r,'sail',{from:'1,0',to:'2,0',amount:2,boats:1}),/capacity/);
- r.game.mobilityUsed=20;assert.throws(()=>order(r,'sail',{from:'1,0',to:'2,0',amount:4}),/movement/);
+ r.game.movement={'1,0:navy':[{n:4,left:0}]};assert.throws(()=>order(r,'sail',{from:'1,0',to:'2,0',amount:4}),/movement/);
  r.game.turnStage='deploy';assert.throws(()=>order(r,'launch',{from:'0,0',to:'1,0'}),/reinforcements/);
 });
 test('fleets scout water; hidden boats, cargo, movements and enemy allocations are sanitized',()=>{
@@ -60,7 +60,7 @@ test('reinforcement plans are editable, structure-only and require an explicit f
  assert.throws(()=>order(r,'confirmDeployment'),/every reinforcement/);
 });
 test('AI chooses one legal deployment or naval decision per step',()=>{
- const r=scenario();fleet(r);const action=chooseBotAction(r,{builds:1});assert.equal(action.type,'bombard');order(r,action.type,action);
+ const r=scenario();fleet(r);r.players[0].profile='navalAggro';const action=chooseBotAction(r,{builds:1});assert.equal(action.type,'bombard');order(r,action.type,action);
  r.game.turnStage='deploy';r.game.reinforcements[r.players[0].id]=6;
  const deploy=chooseBotAction(r);assert.equal(deploy.type,'deploy');assert.equal(deploy.count,3);order(r,deploy.type,deploy);
  assert.equal(r.game.turnStage,'deploy');

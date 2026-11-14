@@ -1,6 +1,19 @@
-# Riskagon — Naval Command Update (v0.4)
+# Riskagon — Frontier Trade Update (v0.5)
 
 A browser multiplayer hex strategy game with a Three.js isometric board, a Socket.IO authoritative server, terrain physics dice, provincial development and Risk-style battles.
+
+## v0.5 movement, borders and trade
+
+- **Choose a stack size:** selecting land defaults to the movable army minus its required garrison. March mode retains a numeric picker, +/− buttons and All available while selecting the destination. Naval destination mode retains its quantity picker too.
+- **Independent movement:** each troop gets two points per turn. Land costs one; owned roads, sailing, embarkation and landing cost half; bombardment costs one. Cohorts preserve remaining points when split, merged or landed, so exhausted troops cannot refresh by joining a fresh army. Movement selection consumes fresh eligible troops first. The old kingdom-wide allowance and stables movement bonuses are retired.
+- **Vertex borders:** Road vertices, Wood wall, Stone wall and Gate use the same two-click origin/destination workflow. Only neighboring corners of a single hex side are valid. Roads are free and require occupation of both touching tiles (outer map borders need their one touching tile occupied). Roads still extend scouting two tiles.
+- **Fortifications:** wood costs one wood and has three durability; stone costs two ore and has six. A committed attack deals up to three wall damage instead of entering that hex; crossing requires a subsequent move after destruction. Friendly walls need gates. Gates cost nothing and are limited to two per tile. Enemy gates do not grant attackers free passage. Docks do not bypass shoreline walls. Wall durability is visible on its border.
+- **Visible treasury:** all five resources stay in a permanent strip above the canvas.
+- **Player trade:** Trade lists only kingdoms with adjacent occupied tiles. Set the offered/requested resource and quantity; the recipient explicitly accepts or rejects. Acceptance rechecks adjacency and both balances, then exchanges atomically. Offers expire on turn end. AI accepts offers only when offered quantity is at least requested quantity.
+- **Hidden taverns:** four random land tiles contain taverns. They appear only inside current scouting visibility. Occupying a tile within one hex grants shop access. Prices are offered units per one purchased resource: native resource 1:1; other goods cost 2 at distance 1–2 from matching terrain, 3 at distance 3, and 4 farther away (or absent). The trade form lists exact quotes before purchase.
+- **AI profiles:** choose Full aggro, Explorer, Navy lover, Aggro Navy, Homebody or Slow and steady before adding an AI. Aggressive profiles initiate attacks; peaceful profiles retaliate only after provocation. Explorer prefers undiscovered tiles and proposes adjacent trades; naval profiles prioritize shipyards and fleets; Homebody expands only for missing resources within two hexes of home; Slow and steady leaves a larger garrison and avoids weak expansion. These are heuristic policies, not strategic search.
+
+The sections below describe the underlying naval and production systems; v0.5 movement and border rules above supersede the earlier fixed movement and paid-road rules.
 
 ## Run in GitHub Codespaces
 
@@ -28,7 +41,7 @@ npm start
 1. Create a realm, invite friends or add AI opponents. Draft unique banner colors, then starting locations in reverse order. Every kingdom begins with three troops and an outpost.
 2. **Roll:** Grab either large die directly on the hex board, hold, drag and release. The keyboard-accessible **Roll dice** button throws them too. The server clamps the throw inputs, adds secret random orientation/spin, simulates rigid bodies, and records transforms at 30 fps from a 120 Hz simulation. Every client replays those same transforms in the board scene. The upward physical faces determine the result; no client result snap or second simulation is used. Turn actions remain locked until the final frame.
 3. **Reinforce:** Click a highlighted outpost or settlement, then use +/−, W/S or arrow keys to allocate troops there. Escape or the back button returns to the discovered-territory view. Split the pool across structures and edit earlier allocations freely, even after the pool reaches zero. Troops stay in the reserve plan until you explicitly choose **Confirm placements & begin orders**. Movement, attacks, construction and ending the turn stay locked until confirmation.
-4. **Orders:** Select a province to inspect it, march/attack, or explicitly open its build recipes. Roads highlight available shared edges in gold. Leave at least one soldier behind when marching. Roads halve movement cost and improve attacks. You get two movement points, plus any stored mobility.
+4. **Orders:** Select a province to inspect it, march/attack, or explicitly open its build recipes. Roads highlight available shared edges in gold. Leave at least one soldier behind when marching. Roads halve movement cost and improve attacks. Each troop has its own two movement points.
 5. End your turn. The first kingdom to **32 victory points** wins.
 
 The opening round awards **zero reinforcement troops**, including matching-roll bonuses, so all players get a turn before troop income begins. Matching resource rolls still benefit all province owners. Matching troop output is banked for every owner. Bonuses earned on other players' rolls join that owner's next reinforcement pool; troops never appear automatically on the board during someone else's turn.
@@ -109,7 +122,7 @@ Build an outpost before adding upgrades. An outpost supports four additional upg
 | Ranch | 1 wood, 2 sheep | Pasture only; +2 sheep on matching roll |
 | Barracks | 2 wood, 2 brick, 1 ore | +3 troops/turn and +3 matching tile production |
 | Stables | 2 wood, 2 wheat, 1 sheep | Matching roll stores one movement point (max 2) |
-| Road | 1 wood, 1 brick | Shared land edge; halves crossing movement cost |
+| Road | Free after occupation | Shared land edge; halves crossing movement cost |
 | Bridge | 2 wood, 1 brick, 1 ore | Lets its builder cross the river hex |
 
 ## Fog and assets

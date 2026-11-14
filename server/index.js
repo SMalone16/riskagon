@@ -2,6 +2,7 @@
 import express from 'express';
 import {createServer} from 'node:http';
 import {Server} from 'socket.io';
+import {PROFILES} from '../shared/profiles.js';
 import {chooseBotAction} from './bot.js';
 import {randomBytes} from 'node:crypto';
 import {newRealm,currentDrafter,chooseDraft,perform,finishRoll,forPlayer,adjacent,dist,COLORS} from './realm.js';
@@ -14,6 +15,7 @@ const send=room=>{
 };
 const code=()=>{let id;do{id=randomBytes(3).toString('hex').toUpperCase();}while(rooms.has(id));return id;};
 function advance(room){
+ if(room.game?.trade){const target=room.players.find(p=>p.id===room.game.trade.to);if(target?.bot){try{perform(room,target.id,{type:room.game.trade.giveCount>=room.game.trade.receiveCount?'acceptTrade':'rejectTrade'});}catch{perform(room,target.id,{type:'rejectTrade'});}}}
  send(room);
  if(room.game?.turnStage==='rolling'){
   if(!room.rollTimer)room.rollTimer=setTimeout(()=>{
@@ -48,7 +50,8 @@ function scheduleBot(room){
    }else if(now.phase==='playing'){
     const key=now.round+':'+now.turn;
     if(room.botContext?.key!==key)room.botContext={key,builds:0};
-    const action=chooseBotAction(room,room.botContext);
+    const action=chooseBotAction(room,room.botContext);room.botContext.steps=(room.botContext.steps||0)+1;
+    if(now.trade?.to===id){perform(room,id,{type:'acceptTrade'});advance(room);return;}
     if(action){perform(room,id,action);if(['build','dock','launch'].includes(action.type))room.botContext.builds++;}
 
    }
@@ -56,7 +59,7 @@ function scheduleBot(room){
   advance(room);
  },Number(process.env.BOT_DELAY_MS)||1600);
 }
-app.get('/api/health',(_req,res)=>res.json({ok:true,rooms:rooms.size,app:'riskagon',version:'0.4.0'}));
+app.get('/api/health',(_req,res)=>res.json({ok:true,rooms:rooms.size,app:'riskagon',version:'0.5.0'}));
 io.on('connection',socket=>{
  socket.on('room:create',({id,name}={},reply=()=>{})=>{
   id=clean(id);name=clean(name)||'Commander';
@@ -82,11 +85,11 @@ io.on('connection',socket=>{
   socket.data={code:roomCode,id};socket.join(roomCode);
   reply({ok:true,code:roomCode});advance(room);
  });
- socket.on('room:addBot',(_={},reply=()=>{})=>{
+ socket.on('room:addBot',({profile='steady'}={},reply=()=>{})=>{
   const room=rooms.get(socket.data.code);
   if(!room||room.host!==socket.data.id)return reply({ok:false,error:'Only the host can invite AI.'});
   if(room.game||room.players.length>=4)return reply({ok:false,error:'Game started or room full.'});
-  room.players.push({id:'bot-'+randomBytes(7).toString('hex'),name:'Kingdom AI '+room.players.length,color:null,connected:true,bot:true,resources:{}});
+  room.players.push({id:'bot-'+randomBytes(7).toString('hex'),profile:PROFILES[profile]?profile:'steady',name:(PROFILES[profile]||'Slow and steady')+' AI',color:null,connected:true,bot:true,resources:{}});
   reply({ok:true});send(room);
  });
  socket.on('room:start',(_={},reply=()=>{})=>{
@@ -129,4 +132,4 @@ if(process.env.NODE_ENV==='production'){
  app.use(vite.middlewares);
 }
 const port=process.env.PORT===undefined?3000:Number(process.env.PORT);
-server.listen(port,'0.0.0.0',()=>console.log('Riskagon v0.4 at http://localhost:'+server.address().port));
+server.listen(port,'0.0.0.0',()=>console.log('Riskagon v0.5 at http://localhost:'+server.address().port));

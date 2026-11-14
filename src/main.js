@@ -1,4 +1,5 @@
 import './style.css';
+import {PROFILES} from '../shared/profiles.js';
 import {io} from 'socket.io-client';
 import {Board} from './board.js';
 import {NAVAL_COSTS,BOAT_CAPACITY,isWater,coastal} from '../server/naval.js';
@@ -14,10 +15,11 @@ const costs={...NAVAL_COSTS,road:{wood:1,brick:1},bridge:{wood:2,brick:1,ore:1},
 const notes={shipyard:'Build boats on adjacent water',dock:'Allows naval troops to land here',cannons:'Return fire against naval bombardment',outpost:'+2 troops per turn; deployment point',settlement:'Upgrade outpost: 3 troops per turn',homes:'+1 native resource on matching roll',walls:'Defense bonus and stored charges',armory:'Stores attack bonuses on matching roll',farm:'+2 wheat on matching roll',lumberyard:'+2 wood on matching roll',quarry:'+2 brick on matching roll',mine:'+2 ore on matching roll',ranch:'+2 sheep on matching roll',barracks:'+3 troops per turn; adds 3 to tile production',stables:'Stores movement on matching roll',bridge:'Cross this river with armies'};
 const industry={forest:'lumberyard',fields:'farm',hills:'quarry',mountains:'mine',pasture:'ranch'};
 let code=new URLSearchParams(location.search).get('room')?.toUpperCase()||'';
+let borderMode=null,originVertex=null,tradeOpen=false;
 let state=null,selected=null,roadMode=false,marchFrom=null,amount=1,buildOpen=false,hudOpen=false,lastFlow='',navalMode=null,lastTurnView='',lastEventSeq=0,allocationBusy=false;
 root.innerHTML=`
 <header><b>RISKAGON <small>THE FRONTIER</small></b><nav><span id="online">Connecting…</span><button data-action="hud" id="hudToggle" aria-expanded="false" aria-controls="hud">Kingdom & treasury</button><button data-action="help">Rules</button></nav></header>
-<main class="map"><div class="playfield"><div id="board" aria-label="Interactive hexagonal game board"></div>
+<div id="treasury" class="treasury" aria-label="Your resources"></div><main class="map"><div class="playfield"><div id="board" aria-label="Interactive hexagonal game board"></div>
 <div id="turnBanner" class="turn-banner" aria-live="polite"></div>
 <div id="entry" class="panel entry"><h1>Shape your kingdom.</h1><p>Harvest the land. Build your roads. Claim the frontier.</p><label for="name">Commander name</label><input id="name" maxlength="24" value="Commander"/>
 <button class="primary" id="create">Create a realm</button><div class="join"><input id="codeInput" maxlength="6" aria-label="Room code" placeholder="ROOM CODE"/><button id="join">Join</button></div></div>
@@ -53,7 +55,7 @@ function preview(){
 }
 const distance=(a,b)=>Math.max(Math.abs(a.q-b.q),Math.abs(a.r-b.r),Math.abs(a.q+a.r-b.q-b.r));
 function canDock(tile){return tile&&!tile.owner&&coastal(state.game,tile)&&state.game.tiles.some(t=>t.owner===id&&t.boats&&t.navy&&distance(t,tile)===1);}
-function backToTerritory(){selected=null;buildOpen=false;roadMode=false;marchFrom=null;navalMode=null;board.fitDiscovered();render();}
+function backToTerritory(){borderMode=null;originVertex=null;tradeOpen=false;selected=null;buildOpen=false;roadMode=false;marchFrom=null;navalMode=null;board.fitDiscovered();render();}
 const board=new Board($('#board'),tile=>{
  const g=state?.game;if(!g)return;
  if(g.phase==='draft'){if(g.draftStage==='spawn'&&g.spawnChoices.includes(tile))command('draft:pick',{kind:'spawn',value:tile});return;}
@@ -66,20 +68,24 @@ const board=new Board($('#board'),tile=>{
   if(tile!==marchFrom)act({type:'march',from:marchFrom,to:tile,amount});
   marchFrom=null;selected=tile;render();return;
  }
- selected=tile;buildOpen=false;roadMode=false;
+ selected=tile;amount=Math.max(1,(g.tiles.find(t=>t.id===tile)?.army||g.tiles.find(t=>t.id===tile)?.navy||1)-(g.tiles.find(t=>t.id===tile)?.navy?0:1));buildOpen=false;roadMode=false;
  if(isActive()&&g.turnStage==='deploy'){
   const target=g.tiles.find(t=>t.id===tile);if(target?.owner===id&&target.building&&!isWater(target))board.focus(tile);
  }
  render();
-},edge=>{if(roadMode&&canOrder())act({type:'road',edge});});
-board.onHover=tile=>{$('#mapGuide').textContent=tile?`${kinds[tile.terrain]} · ${tile.numberHidden?'Number undiscovered':'Roll '+(tile.number??'—')} · ${tile.masked?'Unscouted':isWater(tile)?(tile.boats||0)+' boats · '+(tile.navy||0)+' naval troops':tile.army+' troops'}`:'WASD / arrows to pan · Scroll to zoom · Hover to inspect';};
+},edge=>{
+ if(!canOrder()||!borderMode||!edge.vertex)return;
+ if(!originVertex){originVertex=edge.vertex;render();return;}
+ act({type:borderMode==='road'?'road':borderMode==='gate'?'gate':'edgeWall',vertices:[originVertex,edge.vertex],material:borderMode,tile:selected});originVertex=null;render();
+});
+board.onHover=tile=>{$('#mapGuide').textContent=tile?`${kinds[tile.terrain]} · ${tile.numberHidden?'Number undiscovered':'Roll '+(tile.number??'—')} · ${own&&tile.moveReady?'Ready: '+(isWater(tile)?tile.moveReady.navy:tile.moveReady.army)+' troops · ':''}${tile.masked?'Unscouted':isWater(tile)?(tile.boats||0)+' boats · '+(tile.navy||0)+' naval troops':tile.army+' troops'}`:'WASD / arrows to pan · Scroll to zoom · Hover to inspect';};
 board.update(preview(),{});
 const dice=new BoardDice(board,throwData=>new Promise((resolve,reject)=>{
  socket.timeout(15000).emit('game:action',{type:'roll',throw:throwData},(error,r)=>{if(error||!r?.ok){reject(Error(r?.error||'Roll interrupted. Try again.'));return;}resolve();});
 }),message=>toast(message,true));
 board.onFrame=now=>dice.update(now);
 function buildPanel(tile){
- const options=canBridge(tile)?['bridge']:!tile.building?['outpost']:[...(tile.building===1?['settlement']:[]),...(coastal(state.game,tile)?['shipyard','dock']:[]),'cannons','homes','walls','armory',industry[tile.terrain],'barracks','stables'].filter(Boolean);
+ const options=canBridge(tile)?['bridge']:!tile.building?['outpost']:[...(tile.building===1?['settlement']:[]),...(coastal(state.game,tile)?['shipyard','dock']:[]),'cannons','homes','armory',industry[tile.terrain],'barracks'].filter(Boolean);
  return `<div class="builder"><h2>Build · ${safe(kinds[tile.terrain])}</h2>${options.map(kind=>`<button class="recipe" data-build="${kind}" ${canOrder()&&canPay(kind)&&!tile.structures.includes(kind)&&(kind==='settlement'||kind==='outpost'||kind==='bridge'||tile.structures.filter(k=>k!=='settlement').length<5)?'':'disabled'}><b>${safe(kind)}</b><small>${notes[kind]}</small><span>${costLabel(kind)}${tile.structures.includes(kind)?' · Built':''}</span></button>`).join('')}</div>${btn('Back to orders','closeBuild')}`;
 }
 function destinations(){
@@ -113,12 +119,12 @@ window.addEventListener('keydown',e=>{
 function render(){
  const g=state?.game,phase=g?.phase,stage=g?.turnStage;
  const flow=phase+':'+g?.turn+':'+stage;
- if(flow!==lastFlow){buildOpen=false;roadMode=false;marchFrom=null;navalMode=null;lastFlow=flow;}
+ if(flow!==lastFlow){buildOpen=false;roadMode=false;marchFrom=null;navalMode=null;lastFlow=flow;borderMode=null;originVertex=null;}
  $('#entry').hidden=!!state;$('#lobby').hidden=!state||!!g;$('#control').hidden=!g;$('#turnBanner').hidden=!g;
  $('#hud').hidden=!hudOpen;$('#hudToggle').setAttribute('aria-expanded',String(hudOpen));
  const current=state?.players[g?.turn],tile=g?.tiles.find(t=>t.id===selected),own=tile?.owner===id,reserve=g?.reinforcements?.[id]||0;
  if(state&&!g){
-  $('#lobby').innerHTML=`<h2>Your private realm</h2><strong class="room-code">${safe(state.code)}</strong><p>Share this code or copy the invite link.</p>${btn('Copy invite link','copy')}<div class="lobby-players">${state.players.map(p=>`<p>${safe(p.name)} ${p.bot?'· AI':''} ${p.id===state.host?'· Host':''}</p>`).join('')}</div>${state.host===id?btn('Add AI kingdom','bot',state.players.length<4)+btn('Begin draft','start',state.players.length>=2,'primary'):'<p>Waiting for the host.</p>'}`;
+  $('#lobby').innerHTML=`<h2>Your private realm</h2><strong class="room-code">${safe(state.code)}</strong><p>Share this code or copy the invite link.</p>${btn('Copy invite link','copy')}<div class="lobby-players">${state.players.map(p=>`<p>${safe(p.name)} ${p.bot?'· AI':''} ${p.id===state.host?'· Host':''}</p>`).join('')}</div>${state.host===id?'<label>AI profile <select id="botProfile">'+Object.entries(PROFILES).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('')+'</select></label>'+btn('Add AI kingdom','bot',state.players.length<4)+btn('Begin draft','start',state.players.length>=2,'primary'):'<p>Waiting for the host.</p>'}`;
  }
  let controls='',guide='WASD / arrows to pan · Scroll to zoom · Hover to inspect';
  if(phase==='draft'){
@@ -143,19 +149,19 @@ function render(){
   }else{
    controls=tile?'':`<div class="context-heading"><b>${active?'Issue orders':'Observing the realm'}</b>${g.lastRoll?`<span>⚄ ${g.lastRoll.dice.join(' + ')} = ${g.lastRoll.sum}</span>`:''}</div>`;
    if(tile){
-    controls+=`<div class="province"><b>${safe(kinds[tile.terrain])}</b>${btn('←','territory',true,'close-selection')}<small>${tile.numberHidden?'Number hidden':`Roll ${tile.number??'—'}`} · ${tile.masked?'Unscouted':isWater(tile)?(tile.boats||0)+' boats · '+(tile.navy||0)+' naval troops':tile.army+' soldiers'}${tile.owner?' · '+safe(state.players.find(p=>p.id===tile.owner)?.name):''}</small></div>`;
+    controls+=`<div class="province"><b>${safe(kinds[tile.terrain])}</b>${btn('←','territory',true,'close-selection')}<small>${tile.numberHidden?'Number hidden':`Roll ${tile.number??'—'}`} · ${own&&tile.moveReady?'Ready: '+(isWater(tile)?tile.moveReady.navy:tile.moveReady.army)+' troops · ':''}${tile.masked?'Unscouted':isWater(tile)?(tile.boats||0)+' boats · '+(tile.navy||0)+' naval troops':tile.army+' soldiers'}${tile.owner?' · '+safe(state.players.find(p=>p.id===tile.owner)?.name):''}</small></div>`;
     if(buildOpen&&orders&&(!isWater(tile)||canBridge(tile))&&(own||canBridge(tile)))controls+=buildPanel(tile);
     else if(orders){
      amount=Math.min(Math.max(1,amount),Math.max(1,isWater(tile)?tile.navy:(tile.army||0)-1));
-     if(marchFrom)controls+=`<p>Select an adjacent hex to move or attack.</p>${btn('Cancel march','march')}`;
+     if(marchFrom)controls+=`<div class="quantity move-picker"><label for="amount">Troops to move</label><button data-action="moveLess">−</button><input id="amount" type="number" min="1" max="${tile.army-1}" value="${amount}"/><button data-action="moveMore">+</button><button data-action="moveAll">All available</button></div><p>Select an adjacent hex to move or attack.</p>${btn('Cancel march','march')}`;
      else if(roadMode)controls+=`<p>Click a golden shared edge. Cost: ${costLabel('road')}</p>${btn('Cancel road','road')}`;
-     else if(navalMode)controls+=`<p>${safe(navalMode.type)}: click a highlighted neighboring tile.</p>${btn('Cancel naval order','cancelNaval')}`;
+     else if(navalMode)controls+=`<div class="quantity move-picker"><label for="amount">Troops for naval order</label><input id="amount" type="number" min="1" value="${amount}"/></div><p>${safe(navalMode.type)}: click a highlighted neighboring tile.</p>${btn('Cancel naval order','cancelNaval')}`;
      else if(own){
       if(isWater(tile)){
-       controls+=`<div class="actions">${btn('Sail…','sail',tile.navy>0&&g.mobilityUsed<(g.mobilityCap||2))}${btn('Bombard…','bombard',tile.navy>0&&g.mobilityUsed<(g.mobilityCap||2))}${btn('Land at dock…','land',tile.navy>0&&g.mobilityUsed<(g.mobilityCap||2))}</div>`;
+       controls+=`<div class="actions">${btn('Sail…','sail',tile.navy>0&&(tile.moveReady?.navy??tile.navy)>0)}${btn('Bombard…','bombard',tile.navy>0&&(tile.moveReady?.navy??tile.navy)>0)}${btn('Land at dock…','land',tile.navy>0&&(tile.moveReady?.navy??tile.navy)>0)}</div>`;
        if(!tile.navy)controls+='<p>Select a neighboring coastal outpost to embark troops onto this boat.</p>';
       }else{
-       controls+=`<div class="actions">${btn('Build…','openBuild')}${btn('Road…','road',canPay('road'))}${btn('March / attack','march',tile.army>1&&g.mobilityUsed<(g.mobilityCap||2))}${tile.structures.includes('shipyard')?btn('Launch boat… · '+costLabel('boat'),'launch',canPay('boat')):''}${tile.building&&coastal(g,tile)?btn('Embark…','embark',tile.army>1):''}</div>`;
+       controls+=`<div class="actions">${btn('Build…','openBuild')}${btn('Road vertices','road')}${btn('Wood wall','wood')}${btn('Stone wall','stone')}${btn('Gate','gate')}${btn('March / attack','march',tile.army>1&&(tile.moveReady?.fastArmy??tile.army)>0)}${tile.structures.includes('shipyard')?btn('Launch boat… · '+costLabel('boat'),'launch',canPay('boat')):''}${tile.building&&coastal(g,tile)?btn('Embark…','embark',tile.army>1):''}</div>`;
       }
       if(tile.army>1||tile.navy>0)controls+=`<div class="quantity"><label for="amount">Troops for order</label><input id="amount" type="number" min="1" max="${isWater(tile)?tile.navy:tile.army-1}" value="${amount}"/></div>`;
      }
@@ -163,12 +169,19 @@ function render(){
      else if(canBridge(tile))controls+=btn('Build bridge…','openBuild');
     }
    }else controls+='<p>Select a territory to inspect it and issue orders.</p>';
-   if(active)controls+=`<div class="turn-end"><small>${((g.mobilityCap||2)-g.mobilityUsed).toFixed(1)} movement left${g.round===1?' · Opening round: no troop income':''}</small>${btn('End turn →','end',orders,'primary')}</div>`;
+   if(active)controls+=`<div class="turn-end"><small>Each troop: 2 movement · roads / boats: ½ cost${g.round===1?' · Opening round: no troop income':''}</small>${btn('End turn →','end',orders,'primary')}</div>`;
    guide=navalMode?'Choose an adjacent highlighted naval destination':marchFrom?'Choose an adjacent destination':roadMode?'Click a glowing shared hex edge':'Select a territory · Build recipes open only on request';
   }
  }
+ if(borderMode)controls=`<p>${safe(borderMode)}: choose ${originVertex?'destination':'origin'} vertex. Roads are free; occupy both adjoining tiles. Wood walls cost 1 wood; stone costs 2 ore. Gates are free, two per tile.</p>${btn('Cancel border construction','cancelBorder')}`;
+ if(g&&phase==='playing')controls+=btn('Trade','trade',canOrder());
+ if(tradeOpen&&g){
+  controls=`<div class="trade-form"><label>Partner<select id="tradePartner">${g.tiles.filter(t=>t.tavern&&g.tiles.some(o=>o.owner===id&&(o.army||o.navy)&&distance(o,t)<=1)).map(t=>`<option value="tavern:${t.id}">Tavern ${t.id}</option>`).join('')}${state.players.filter(p=>p.id!==id&&g.tiles.some(t=>t.owner===id&&(t.army||t.navy)&&g.tiles.some(u=>u.owner===p.id&&(u.army||u.navy)&&distance(t,u)===1))).map(p=>`<option value="${p.id}">${safe(p.name)}</option>`).join('')}</select></label><label>Give<select id="give">${Object.keys(icons).map(r=>`<option>${r}</option>`).join('')}</select><input id="giveCount" aria-label="Offer amount" type="number" min="1" value="1"/></label><label>Receive<select id="receive">${Object.keys(icons).map(r=>`<option ${r==='ore'?'selected':''}>${r}</option>`).join('')}</select><input id="receiveCount" aria-label="Receive amount" type="number" min="1" value="1"/></label><small>${g.tiles.filter(t=>t.tavern&&t.tavernRates).map(t=>'Tavern '+t.id+': '+Object.entries(t.tavernRates).map(([r,n])=>r+' '+n+':1').join(' · ')).join('<br>')}</small><small>Taverns: local resource 1:1; imports cost 2–4 offered units per item. Player trades require acceptance.</small>${btn('Send offer / buy','sendTrade')}${btn('Close trade','trade')}</div>`;
+ }
+ if(g?.trade?.to===id)controls+=`<p>Trade offer: receive ${g.trade.giveCount} ${safe(g.trade.give)} for ${g.trade.receiveCount} ${safe(g.trade.receive)}.</p>${btn('Accept trade','acceptTrade')}${btn('Reject trade','rejectTrade')}`;
+ $('#treasury').innerHTML=Object.entries(icons).map(([r,icon])=>`<span>${icon} ${r} <b>${me()?.resources?.[r]||0}</b></span>`).join('');
  $('#control').innerHTML=controls;$('#mapGuide').textContent=guide;
- board.update(g?.tiles||preview(),{selected,deploy:isActive()&&stage==='deploy',allocations:g?.allocations?.[id]||{},destinations:destinations(),roadMode:canOrder()&&roadMode,roads:g?.roads||{},players:state?.players||[],myId:id,spawnChoices:phase==='draft'&&g.draftStage==='spawn'?g.spawnChoices:[]});
+ board.update(g?.tiles||preview(),{selected,borderMode,originVertex,borders:g?.borders||{},deploy:isActive()&&stage==='deploy',allocations:g?.allocations?.[id]||{},destinations:destinations(),roadMode:canOrder()&&roadMode,roads:g?.roads||{},players:state?.players||[],myId:id,spawnChoices:phase==='draft'&&g.draftStage==='spawn'?g.spawnChoices:[]});
  const viewKey=phase==='playing'&&isActive()?g.round+':'+g.turn:'';
  if(viewKey&&viewKey!==lastTurnView){selected=null;requestAnimationFrame(()=>{board.resize();board.fitDiscovered();});lastTurnView=viewKey;toast('Your turn — command your kingdom.');}
  $('#turnBanner').classList.toggle('your-turn',isActive());
@@ -188,17 +201,26 @@ root.addEventListener('click',async e=>{
  if(el.dataset.spawn){command('draft:pick',{kind:'spawn',value:el.dataset.spawn});return;}
  if(el.dataset.build){act(el.dataset.build==='bridge'?{type:'bridge',tile:selected}:{type:'build',tile:selected,kind:el.dataset.build});return;}
  const action=el.dataset.action;
+ if(action==='trade'){tradeOpen=!tradeOpen;render();return;}
+ if(action==='acceptTrade'||action==='rejectTrade'){act({type:action});return;}
+ if(action==='sendTrade'){
+  const partner=$('#tradePartner').value,give=$('#give').value,receive=$('#receive').value,count=Number($('#receiveCount').value);
+  act(partner.startsWith('tavern:')?{type:'tavernTrade',tile:partner.slice(7),give,receive,count}:{type:'offerTrade',player:partner,give,receive,giveCount:Number($('#giveCount').value),receiveCount:count});tradeOpen=false;render();return;
+ }
+ if(action==='cancelBorder'){borderMode=null;originVertex=null;render();return;}
+ if(['moveMore','moveLess','moveAll'].includes(action)){const t=state.game.tiles.find(t=>t.id===selected);amount=action==='moveAll'?Math.min(t.army-1,t.moveReady?.army??t.army-1):Math.max(1,Math.min(t.army-1,amount+(action==='moveMore'?1:-1)));render();return;}
+
  if(action==='help'){const d=$('#rules');d.open?d.close():d.showModal();return;}
  if(action==='hud'){hudOpen=!hudOpen;render();return;}
  if(action==='copy'){try{await navigator.clipboard.writeText(location.href);toast('Invite link copied.');}catch{toast(location.href);}return;}
- if(action==='bot'||action==='start'){command('room:'+(action==='bot'?'addBot':'start'),{});return;}
+ if(action==='bot'||action==='start'){command('room:'+(action==='bot'?'addBot':'start'),action==='bot'?{profile:$('#botProfile').value}:{});return;}
  if(action==='physicalRoll'){dice.throw();return;}
  if(action==='reset'){board.reset();return;}
  if(action==='home'||action==='territory'){backToTerritory();return;}
  if(action==='openBuild'){buildOpen=true;marchFrom=null;navalMode=null;roadMode=false;}
  if(action==='closeBuild')buildOpen=false;
  if(action==='deselect'){selected=null;buildOpen=false;roadMode=false;marchFrom=null;}
- if(action==='road'){roadMode=!roadMode;marchFrom=null;buildOpen=false;}
+ if(['road','wood','stone','gate'].includes(action)){borderMode=action;originVertex=null;marchFrom=null;buildOpen=false;}
  if(action==='march'){marchFrom=marchFrom?null:selected;roadMode=false;buildOpen=false;}
  if(action==='more'||action==='less'){changeAllocation(action==='more'?1:-1);return;}
  if(action==='confirmDeployment'){act({type:'confirmDeployment'},backToTerritory);return;}
