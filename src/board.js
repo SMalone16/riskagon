@@ -93,6 +93,28 @@ function proceduralBuilding(parent,color,level){
  }
  return group;
 }
+function boat(color){
+ const group=new THREE.Group();
+ const hull=box(group,0x6f4b32,1.05,.22,.48,0,.16,0);
+ cone(group,0x8d6340,.28,.38,.62,.16,0,4).rotation.z=-Math.PI/2;
+ box(group,0xc79a60,.88,.055,.34,0,.30,0);
+ box(group,0x5f4631,.045,.9,.045,0,.73,0);
+ const sail=new THREE.Mesh(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(.03,.43,.03),new THREE.Vector3(.03,1.1,.03),new THREE.Vector3(.48,.45,.03)]),new THREE.MeshStandardMaterial({color,side:THREE.DoubleSide,roughness:.8}));
+ group.add(sail);return group;
+}
+function navalBuilding(parent,kind,color){
+ if(kind==='dock'){
+  for(let i=0;i<6;i++)box(parent,0xb48a57,.17,.08,.57,(i-2)*.17,.14,0);
+  for(const x of [-.4,.4])box(parent,0x6b5135,.08,.4,.08,x,0,.25);
+ }else if(kind==='shipyard'){
+  box(parent,0xd9d6b2,.8,.6,.7,0,.3,0);cone(parent,color,.64,.4,0,.8,0,4).rotation.y=Math.PI/4;
+  const hull=boat(color);hull.scale.setScalar(.45);hull.position.set(.55,0,.15);parent.add(hull);
+ }else{
+  box(parent,0x806143,.4,.19,.35,0,.13,0);
+  const barrel=mesh(new THREE.CylinderGeometry(.09,.13,.65,8),makeMat(0x273a40),parent,.2,.35,0);barrel.rotation.z=-Math.PI*.40;
+  for(const z of [-.21,.21]){const wheel=mesh(new THREE.CylinderGeometry(.16,.16,.07,8),makeMat(0x443e32),parent,0,.18,z);wheel.rotation.x=Math.PI/2;}
+ }
+}
 function textSprite(text,color='#453f30',bg='#f7e7c5',size=.37){
  const canvas=document.createElement('canvas');canvas.width=128;canvas.height=128;
  const c=canvas.getContext('2d');
@@ -120,7 +142,7 @@ export class Board{
   this.controls=new OrbitControls(this.camera,this.renderer.domElement);
   this.controls.enableDamping=true;this.controls.dampingFactor=.07;
   this.controls.enableRotate=true;this.controls.maxPolarAngle=Math.PI*.44;this.controls.minPolarAngle=Math.PI*.22;
-  this.controls.minZoom=.6;this.controls.maxZoom=3.5;this.controls.mouseButtons.RIGHT=THREE.MOUSE.PAN;
+  this.controls.minZoom=.6;this.controls.maxZoom=8;this.controls.mouseButtons.RIGHT=THREE.MOUSE.PAN;
   this.scene.add(new THREE.HemisphereLight(0xdaf1ff,0x4c5645,2.5));
   const sun=new THREE.DirectionalLight(0xffedd0,3.0);sun.position.set(-8,16,10);
   sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
@@ -134,7 +156,17 @@ export class Board{
   this.board=new THREE.Group();this.world.add(this.board);
   this.pickables=[];this.ray=new THREE.Raycaster();this.pointer=new THREE.Vector2();
   this.loader=new GLTFLoader();this.models=new Map();this.characterModels=new Map();this.kaykit=false;this.version=0;
-  this.tiles=[];this.options={};this.hover=null;this.pointerDown=null;
+  this.tiles=[];this.options={};this.hover=null;this.pointerDown=null;this.keys=new Set();this.effects=[];
+  this.hoverOutline=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(Array.from({length:6},(_,i)=>new THREE.Vector3(Math.sin(i*Math.PI/3)*1.025,0,Math.cos(i*Math.PI/3)*1.025))),new THREE.LineBasicMaterial({color:0xfff2b5,depthTest:false}));
+  this.hoverOutline.visible=false;this.hoverOutline.renderOrder=20;this.scene.add(this.hoverOutline);
+  this.keyDown=e=>{
+   const key=e.key.length===1?e.key.toLowerCase():e.key;
+   if(e.defaultPrevented||e.target.closest?.('input,textarea,select,dialog')||!['w','a','s','d','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(key))return;
+   e.preventDefault();this.keys.add(key);
+  };
+  this.keyUp=e=>this.keys.delete(e.key.length===1?e.key.toLowerCase():e.key);this.blur=()=>this.keys.clear();
+  window.addEventListener('keydown',this.keyDown);window.addEventListener('keyup',this.keyUp);window.addEventListener('blur',this.blur);
+  this.lastFrame=performance.now();
   fetch('/assets/kaykit/manifest.json').then(r=>{if(!r.ok)throw Error();return r.json()})
    .then(()=>{this.kaykit=true;this.update(this.tiles,this.options);}).catch(()=>{});
   this.resizeObs=new ResizeObserver(()=>this.resize());this.resizeObs.observe(container);this.resize();
@@ -142,7 +174,9 @@ export class Board{
   this.renderer.domElement.addEventListener('pointermove',e=>{
    const hit=this.hit(e);const target=hit?.object?.userData;
    this.renderer.domElement.style.cursor=target?.tile||target?.edge?'pointer':'grab';
+   this.hover=target?.tile||null;this.refreshHover();this.onHover?.(this.tiles.find(t=>t.id===this.hover));
   });
+  this.renderer.domElement.addEventListener('pointerleave',()=>{this.hover=null;this.refreshHover();this.onHover?.(null);});
   this.renderer.domElement.addEventListener('pointerup',e=>{
     if(!this.pointerDown||Math.hypot(e.clientX-this.pointerDown.x,e.clientY-this.pointerDown.y)>6)return;
     const hit=this.hit(e);if(!hit)return;
@@ -165,6 +199,33 @@ export class Board{
   this.camera.top=size;this.camera.bottom=-size;
   this.camera.updateProjectionMatrix();this.renderer.setSize(w,h);
  }
+ refreshHover(){
+  const tile=this.tiles.find(t=>t.id===this.hover);this.hoverOutline.visible=!!tile;
+  if(tile){this.hoverOutline.position.copy(pos(tile));this.hoverOutline.position.y=.2;}
+ }
+ fitDiscovered(){this.fitTiles(this.tiles.filter(t=>t.discovered||t.visible||t.owner===this.options.myId));}
+ fitTiles(tiles){
+  if(!tiles.length)return;
+  const center=tiles.reduce((v,t)=>v.add(pos(t)),new THREE.Vector3()).multiplyScalar(1/tiles.length);
+  const offset=this.camera.position.clone().sub(this.controls.target);
+  this.controls.target.copy(center);this.camera.position.copy(center).add(offset);this.camera.lookAt(center);this.camera.updateMatrixWorld();
+  const points=tiles.flatMap(t=>{const p=pos(t);return [-1.3,1.3].flatMap(x=>[-1.3,1.3].flatMap(z=>[0,2].map(y=>new THREE.Vector3(p.x+x,y,p.z+z).applyMatrix4(this.camera.matrixWorldInverse))));});
+  const width=Math.max(...points.map(p=>p.x))-Math.min(...points.map(p=>p.x));
+  const height=Math.max(...points.map(p=>p.y))-Math.min(...points.map(p=>p.y));
+  this.camera.zoom=Math.min(8,Math.max(.6,Math.min((this.camera.right-this.camera.left)/(width+1),(this.camera.top-this.camera.bottom)/(height+1))));
+  this.camera.updateProjectionMatrix();this.controls.update();
+ }
+ playEvent(event,players){
+  if(!event.from&&!event.to)return;
+  const from=this.tiles.find(t=>t.id===event.from),to=this.tiles.find(t=>t.id===event.to);
+  const color=FACTIONS[players.find(p=>p.id===event.actor)?.color]||0xe8d5a4;
+  const moving=['march','sail','land','embark'].includes(event.type);
+  let effect;
+  if(moving){effect=event.type==='sail'?boat(color):makeTroop(color,'infantry',1);}
+  else{effect=new THREE.Mesh(new THREE.TorusGeometry(.8,.07,6,6),new THREE.MeshBasicMaterial({color,transparent:true,opacity:.9,depthTest:false}));effect.rotation.x=-Math.PI/2;}
+  const start=pos(from||to),end=pos(to||from);start.y=.25;end.y=.25;
+  this.scene.add(effect);this.effects.push({mesh:effect,start,end,began:performance.now(),moving});
+ }
  async prefab(relative){
   if(!this.kaykit)return null;
   if(!this.models.has(relative)){
@@ -185,7 +246,7 @@ export class Board{
  }
  focus(id){
   const tile=this.tiles.find(t=>t.id===id);if(!tile)return;
-  const target=pos(tile);this.controls.target.copy(target);this.camera.position.copy(target).add(new THREE.Vector3(13,19,23));this.camera.zoom=Math.min(2.45,this.camera.zoom*1.7);this.camera.updateProjectionMatrix();this.controls.update();
+  const target=pos(tile);this.controls.target.copy(target);this.camera.position.copy(target).add(new THREE.Vector3(13,19,23));this.camera.zoom=7;this.camera.updateProjectionMatrix();this.controls.update();
  }
  reset(){this.controls.target.set(0,0,0);this.camera.position.set(18,24,28);this.camera.zoom=1;this.camera.updateProjectionMatrix();this.controls.update();}
  async character(name){
@@ -225,6 +286,7 @@ export class Board{
   });
   this.board.clear();this.pickables=[];
   const selected=options.selected,roadMode=options.roadMode;
+  this.refreshHover();
   for(const edge of boundaryEdges(tiles)){
    const rail=mesh(new THREE.BoxGeometry(1.13,.25,.13),makeMat(0x496b63),this.board,edge.x,.28,edge.z);
    rail.rotation.y=edge.angle;
@@ -240,10 +302,10 @@ export class Board{
    ],root,0,0,0);
    base.userData.tile=tile.id;this.pickables.push(base);
    const top=new THREE.Group();top.position.y=.17;root.add(top);
-   if(selected===tile.id){
+   if(selected===tile.id||options.destinations?.includes(tile.id)||options.deploy&&tile.owner===options.myId&&tile.building){
     const points=[];
     for(let i=0;i<6;i++){const theta=i*Math.PI/3;points.push(new THREE.Vector3(Math.sin(theta)*1.013,.04,Math.cos(theta)*1.013));}
-    const line=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0xffecac}));
+    const line=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:selected===tile.id?0xffecac:0x7af5c9}));
     top.add(line);
    }
    const nature=new THREE.Group();nature.position.set(tile.condensed?-.38:0,0,tile.condensed?-.32:-.08);nature.scale.setScalar(tile.condensed?.34:1.2);top.add(nature);
@@ -277,14 +339,15 @@ export class Board{
      const rel='buildings/'+(player?.color||'blue')+'/building_'+(tile.building===2?'castle':'home_A')+'_'+(player?.color||'blue');
      this.decorateWithPrefab(holder,rel,tile.building===2?.66:.89);
     }
-    if(tile.structures?.length>1){
+    if(tile.structures?.length>0){
       const addOn=new THREE.Group();top.add(addOn);
       let n=0;
-      for(const kind of tile.structures.filter(x=>x!=='outpost')){
+      for(const kind of tile.structures.filter(x=>!['outpost','settlement'].includes(x))){
        const angle=(n++)*Math.PI*.57+.7;
        const x=.52*Math.cos(angle),z=.52*Math.sin(angle);
        const structure=new THREE.Group();structure.position.set(x,0,z);structure.scale.setScalar(.47);addOn.add(structure);
-       if(kind==='walls'){for(let j=-1;j<=1;j++)box(structure,0xa7aca7,.32,.25,.18,j*.36,.13,0);}
+       if(['shipyard','dock','cannons'].includes(kind)){navalBuilding(structure,kind,color);}
+       else if(kind==='walls'){for(let j=-1;j<=1;j++)box(structure,0xa7aca7,.32,.25,.18,j*.36,.13,0);}
        else if(kind==='farm'||kind==='lumberyard'||kind==='quarry'||kind==='mine'||kind==='ranch'){
         box(structure,0xe8d8ae,.53,.28,.40,0,.15,0);
         cone(structure,kind==='farm'?0xe9c778:color,.42,.30,0,.42,0,4).rotation.y=Math.PI/4;
@@ -294,18 +357,19 @@ export class Board{
        }
       }
     }
+    if(tile.boats){const fleet=boat(color);fleet.position.y=.18;top.add(fleet);const label=textSprite(tile.navy+'/'+tile.boats,'#fff','#25495c',.58);label.position.set(.53,.8,.25);top.add(label);}
     const army=new THREE.Group();army.position.set(tile.building?.25:0,0,tile.building?.12:0);top.add(army);
     const addSoldier=(name,kind,x,z,height)=>{
      const holder=new THREE.Group();holder.position.set(x,0,z);army.add(holder);
      holder.add(makeTroop(color,kind,height/.95));
      if(kind!=='cavalry')this.attachCharacter(holder,name,color,height);
     };
-    addSoldier('Knight','infantry',-.20,-.15,.64);
+    if(tile.army>0)addSoldier('Knight','infantry',-.20,-.15,.64);
     if(tile.army>2)addSoldier('Rogue','archer',.16,-.21,.55);
     if(tile.army>5)addSoldier('Barbarian',tile.structures?.includes('stables')?'cavalry':'infantry',-.03,.20,.52);
-    const count=textSprite(String(tile.army),'#fff','#273c4a',.35);
-    count.position.set(.52,.24,.51);top.add(count);
+    if(tile.army>0){const count=textSprite(String(tile.army),'#fff','#273c4a',.35);count.position.set(.52,.24,.51);top.add(count);}
    }
+   if(options.allocations?.[tile.id]){const badge=textSprite('+'+options.allocations[tile.id],'#203d34','#ffe1a1',.65);badge.position.set(0,1.3,0);top.add(badge);}
    const own=tile.owner===options.myId;
    const ownerBorder=tile.owner?new THREE.Mesh(
     new THREE.TorusGeometry(.79,own?.056:.026,5,6),
@@ -353,8 +417,25 @@ export class Board{
  animate(){
   this.onFrame?.(performance.now());
   this.controls.update();
+  const now=performance.now(),dt=Math.min(.05,(now-this.lastFrame)/1000);this.lastFrame=now;
+  if(this.keys.size){
+   const forward=this.camera.getWorldDirection(new THREE.Vector3());forward.y=0;forward.normalize();
+   const right=new THREE.Vector3().crossVectors(forward,new THREE.Vector3(0,1,0));
+   const x=Number(this.keys.has('d')||this.keys.has('ArrowRight'))-Number(this.keys.has('a')||this.keys.has('ArrowLeft'));
+   const z=Number(this.keys.has('w')||this.keys.has('ArrowUp'))-Number(this.keys.has('s')||this.keys.has('ArrowDown'));
+   const delta=forward.multiplyScalar(z).addScaledVector(right,x).multiplyScalar(dt*10/this.camera.zoom);
+   const target=this.controls.target.clone().add(delta);target.x=THREE.MathUtils.clamp(target.x,-12,12);target.z=THREE.MathUtils.clamp(target.z,-12,12);
+   delta.copy(target).sub(this.controls.target);this.camera.position.add(delta);this.controls.target.copy(target);this.controls.update();
+  }
+  for(const effect of this.effects){
+   const t=Math.min(1,(now-effect.began)/1200);
+   effect.mesh.position.copy(effect.start).lerp(effect.end,t);if(effect.moving)effect.mesh.position.y+=Math.sin(t*Math.PI)*.3;
+   else effect.mesh.scale.setScalar(1+t*.6);
+   if(t===1){this.scene.remove(effect.mesh);effect.mesh.traverse(o=>{o.geometry?.dispose();if(o.material&&!Array.isArray(o.material))o.material.dispose();});}
+  }
+  this.effects=this.effects.filter(e=>now-e.began<1200);
   this.renderer.render(this.scene,this.camera);
   this.frame=requestAnimationFrame(()=>this.animate());
  }
- destroy(){cancelAnimationFrame(this.frame);this.resizeObs.disconnect();this.controls.dispose();this.renderer.dispose();}
+ destroy(){window.removeEventListener('keydown',this.keyDown);window.removeEventListener('keyup',this.keyUp);window.removeEventListener('blur',this.blur);cancelAnimationFrame(this.frame);this.resizeObs.disconnect();this.controls.dispose();this.renderer.dispose();}
 }

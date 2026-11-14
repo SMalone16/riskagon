@@ -1,11 +1,12 @@
 
 import {randomInt} from 'node:crypto';
 import {rollPhysics,simulateRoll} from './dicePhysics.js';
+import {NAVAL_COSTS,isWater,coastal,performNaval} from './naval.js';
 export const COLORS=['blue','red','green','yellow'];
 export const RESOURCES=['wood','brick','wheat','sheep','ore'];
 export const RADIUS=5;
 export const TARGET_POINTS=32;
-export const COSTS={
+export const COSTS={...NAVAL_COSTS,
  road:{wood:1,brick:1},outpost:{wood:1,brick:1},settlement:{wood:2,brick:2,wheat:2,sheep:1},
  homes:{wood:2,brick:1,wheat:1},
  walls:{brick:2,ore:1},
@@ -31,7 +32,7 @@ export const edgeId=(a,b)=>[a,b].sort().join('|');
 export function generateMap(){
  const cells=[];
  for(let q=-RADIUS;q<=RADIUS;q++)for(let r=-RADIUS;r<=RADIUS;r++)if(Math.abs(q+r)<=RADIUS){
-  cells.push({q,r,id:axialId(q,r),terrain:null,number:null,owner:null,army:0,building:0,structures:[],ward:0,attackStock:0,bridge:false,navy:0});
+  cells.push({q,r,id:axialId(q,r),terrain:null,number:null,owner:null,army:0,building:0,structures:[],ward:0,attackStock:0,bridge:false,navy:0,boats:0});
  }
  const byId=new Map(cells.map(t=>[t.id,t]));
  // Large, connected terrain provinces (3-12 hexes), deliberately not shuffled per individual tile.
@@ -67,7 +68,7 @@ export function generateMap(){
 }
 const choices=()=>['-5,0','5,0','0,-5','0,5','-5,5','5,-5','-3,-2','3,2'];
 export function newRealm(players){
- return {phase:'draft',draftStage:'color',draftOrder:players.map(p=>p.id),draftIndex:0,spawnChoices:choices(),tiles:generateMap(),roads:{},turn:0,round:1,rolled:false,turnStage:'roll',lastRoll:null,lastBattle:null,mobilityUsed:0,reinforcements:{},productionReserve:{},pendingDice:null,winner:null,log:['Color draft is open. Choose a banner.']};
+ return {phase:'draft',draftStage:'color',draftOrder:players.map(p=>p.id),draftIndex:0,spawnChoices:choices(),tiles:generateMap(),roads:{},turn:0,round:1,rolled:false,turnStage:'roll',lastRoll:null,lastBattle:null,mobilityUsed:0,reinforcements:{},productionReserve:{},allocations:{},discovered:{},events:[],eventSeq:0,pendingDice:null,winner:null,log:['Color draft is open. Choose a banner.']};
 }
 export function currentDrafter(room){
  const g=room.game;if(!g||g.phase!=='draft')return null;
@@ -100,6 +101,7 @@ export function chooseDraft(room,id,kind,value){
   g.phase='playing';g.turn=0;g.round=1;g.rolled=false;g.turnStage='roll';
   g.mobilityUsed=0;g.log.unshift('The frontier opens. Every kingdom starts with 3 troops.');
   for(const x of room.players)g.reinforcements[x.id]=0;
+  discover(room);
  }
  g.log=g.log.slice(0,20);
 }
@@ -129,11 +131,12 @@ export function reinforcementIncome(g,id,sum){
  for(const t of owned)if(t.army>0&&RESOURCE_TERRAIN[t.terrain])occupied[RESOURCE_TERRAIN[t.terrain]]++;
  const pairs=Object.fromEntries(Object.entries(occupied).map(([r,n])=>[r,Math.floor(n/2)]));
  const territory=Object.values(pairs).reduce((a,b)=>a+b,0);
- const structures=owned.reduce((n,t)=>n+troopOutput(t),0);
+ const outposts=owned.filter(t=>t.building===1).length*2,settlements=owned.filter(t=>t.building>=2).length*3,barracks=owned.filter(t=>t.structures.includes('barracks')).length*3;
+ const structures=outposts+settlements+barracks;
  const production=owned.filter(t=>t.number===sum&&RESOURCE_TERRAIN[t.terrain]).reduce((n,t)=>n+troopOutput(t),0);
  // Protect the opening round; production is delayed too, so nobody starts with a rush army.
  const opening=g.round===1;
- return {pairs,territory:opening?0:territory,structures:opening?0:structures,production:opening?0:production,opening,
+ return {pairs,outposts:opening?0:outposts,settlements:opening?0:settlements,barracks:opening?0:barracks,territory:opening?0:territory,structures:opening?0:structures,production:opening?0:production,opening,
   total:opening?0:territory+structures+production};
 }
 export function finishRoll(room,now=Date.now()){
@@ -157,14 +160,15 @@ export function finishRoll(room,now=Date.now()){
  g.income.total+=g.income.production;
  g.productionReserve[p.id]=0;
  // A conquered kingdom with only bridge hexes cannot get trapped with an unusable reserve.
- const canDeploy=g.tiles.some(t=>t.owner===p.id&&(t.army>0||t.building)&&RESOURCE_TERRAIN[t.terrain]);
+ const canDeploy=g.tiles.some(t=>t.owner===p.id&&t.building&&!isWater(t));
  g.reinforcements[p.id]=canDeploy?g.income.total:0;
+ g.allocations[p.id]={};
  g.turnStage=g.reinforcements[p.id]>0?'deploy':'orders';
  g.log.unshift(p.name+' rolled '+g.lastRoll.dice.join(' + ')+' = '+sum+'. '+g.reinforcements[p.id]+' troops to place.');
  g.log=g.log.slice(0,20);
  return true;
 }
-export function perform(room,id,action){
+function performAction(room,id,action){
  const g=room.game,p=room.players.find(x=>x.id===id);
  if(g?.phase!=='playing')throw Error('The match is not currently playing.');
  if(!p||room.players[g.turn].id!==id)throw Error('Not your turn.');
@@ -189,8 +193,11 @@ export function perform(room,id,action){
  }else{
   if(!g.rolled)throw Error('Roll your physical dice before taking actions.');
   if(g.turnStage==='rolling')throw Error('Wait for the dice to settle.');
-  if(t!=='deploy'&&g.turnStage!=='orders')throw Error('Place all reinforcements before movement, combat or building.');
-  if(t==='road'){
+  if(!['deploy','allocate','confirmDeployment'].includes(t)&&g.turnStage!=='orders')throw Error('Place all reinforcements before movement, combat or building.');
+  if(performNaval(g,p,action,{pay,battle:diceBattle})){
+   if(g.lastBattle?.defender){const defender=room.players.find(x=>x.id===g.lastBattle.defender);if(defender)g.lastBattle.defender=defender.name;}
+   g.log.unshift(p.name+' issued naval orders.');
+  }else if(t==='road'){
    const pieces=String(action.edge||'').split('|');
    if(pieces.length!==2||edgeId(...pieces)!==action.edge)throw Error('Invalid road edge.');
    const a=tileAt(g,pieces[0]),b=tileAt(g,pieces[1]);
@@ -208,7 +215,9 @@ export function perform(room,id,action){
   }else if(t==='build'){
    const tile=tileAt(g,action.tile),kind=action.kind;
    if(!tile||tile.owner!==id)throw Error('Build on your territory.');
-   if(!COSTS[kind]||['road','bridge'].includes(kind))throw Error('Unknown structure.');
+   if(!COSTS[kind]||['road','bridge','boat'].includes(kind))throw Error('Unknown structure.');
+   if(isWater(tile))throw Error('Structures must be built on land.');
+   if(['shipyard','dock'].includes(kind)&&!coastal(g,tile))throw Error('Shipyards and docks need coastal land.');
    if(tile.structures.includes(kind))throw Error('Structure is already built.');
    if(kind==='settlement'&&tile.building!==1)throw Error('Upgrade an outpost to a settlement.');
    if(kind==='outpost'){
@@ -222,10 +231,24 @@ export function perform(room,id,action){
    if(kind==='outpost')tile.building=1;
    if(kind==='settlement')tile.building=2;
    g.log.unshift(p.name+' constructed '+kind+' in '+tile.terrain+'.');
+  }else if(t==='allocate'){
+   if(g.turnStage!=='deploy')throw Error('Allocation is only available during reinforcements.');
+   const tile=tileAt(g,action.tile),count=action.count;
+   if(!tile||tile.owner!==id||!tile.building||isWater(tile))throw Error('Allocate troops only at your outposts or settlements.');
+   const plan=g.allocations[id]||{},previous=plan[tile.id]||0;
+   if(!Number.isSafeInteger(count)||count<0||count-previous>(g.reinforcements[id]||0))throw Error('Invalid troop allocation or not enough reinforcements.');
+   g.allocations[id]={...plan,[tile.id]:count};g.reinforcements[id]-=count-previous;
+  }else if(t==='confirmDeployment'){
+   if(g.turnStage!=='deploy'||g.reinforcements[id]!==0)throw Error('Allocate every reinforcement before confirming.');
+   const plan=Object.entries(g.allocations[id]||{}).filter(([,n])=>n>0);
+   if(!plan.length||plan.some(([key])=>{const tile=tileAt(g,key);return !tile||tile.owner!==id||!tile.building||isWater(tile);}))throw Error('Every allocation needs an owned outpost or settlement.');
+   for(const [key,n] of plan)tileAt(g,key).army+=n;
+   g.allocations[id]={};g.turnStage='orders';
   }else if(t==='deploy'){
    const tile=tileAt(g,action.tile),count=action.count;
    if(g.turnStage!=='deploy')throw Error('Not enough reinforcements remaining; deployment is only at the start of a turn.');
-   if(!tile||tile.owner!==id||(!tile.army&&!tile.building)||['lake','river'].includes(tile.terrain))throw Error('Deploy on an owned occupied land tile or structure.');
+   if(!tile||tile.owner!==id||!tile.building||isWater(tile))throw Error('Deploy only at your outposts or settlements.');
+   if(Object.values(g.allocations[id]||{}).some(n=>n>0))throw Error('Confirm or clear your planned allocations first.');
    if(!Number.isSafeInteger(count)||count<1||(g.reinforcements[id]||0)<count)throw Error('Not enough reinforcements remaining.');
    tile.army+=count;g.reinforcements[id]-=count;
    if(g.reinforcements[id]===0)g.turnStage='orders';
@@ -235,7 +258,7 @@ export function perform(room,id,action){
    if(!from||!to||!adjacent(from,to))throw Error('March to an adjacent hex.');
    if(from.owner!==id)throw Error('March from your own territory.');
    if(!Number.isSafeInteger(count)||count<1||count>=from.army)throw Error('Keep at least one soldier at home.');
-   if(to.terrain==='lake')throw Error('A lake requires a future shipyard and naval transport.');
+   if(to.terrain==='lake')throw Error('Use a boat and a dock to cross the lake.');
    if(to.terrain==='river'&&to.bridge!==id)throw Error('Construct a bridge before crossing this river.');
    const road=g.roads[edgeId(from.id,to.id)]===id;
    const mobilityCost=road?0.5:1;
@@ -268,9 +291,33 @@ export function perform(room,id,action){
  }
  g.log=g.log.slice(0,20);
 }
+const actionLabels={roll:'rolled the dice',end:'ended their turn',deploy:'placed troops',confirmDeployment:'placed troops',allocate:'planned reinforcements',build:'built one structure',road:'built one road',bridge:'built one bridge',march:'moved troops',launch:'launched a boat',embark:'embarked troops',sail:'moved a fleet',bombard:'bombarded a garrison',land:'landed troops',dock:'built a dock'};
+function discover(room){
+ for(const p of room.players)room.game.discovered[p.id]=[...new Set([...(room.game.discovered[p.id]||[]),...visibility(room.game,p.id).visible])];
+}
+function publicEvent(event,id){
+ const own=event.actor===id,seen=event.audience[id]||[];
+ const from=own||seen.includes(event.from)?event.from:null,to=own||seen.includes(event.to)?event.to:null;
+ const detailed=own||from||to;
+ return {seq:event.seq,at:event.at,actor:event.actor,type:event.type,summary:event.summary,from,to,
+  amount:detailed?event.amount:null,kind:detailed?event.kind:null};
+}
+export function perform(room,id,action){
+ const g=room.game;
+ const before=g?Object.fromEntries(room.players.map(p=>[p.id,[...visibility(g,p.id).visible]])):{};
+ performAction(room,id,action);
+ discover(room);
+ if(action.type==='allocate')return; // Draft allocations stay private until the player confirms.
+ const actor=room.players.find(p=>p.id===id);
+ const audience=Object.fromEntries(room.players.map(p=>[p.id,[...new Set([...(before[p.id]||[]),...visibility(g,p.id).visible])]]));
+ const event={seq:++g.eventSeq,at:Date.now(),actor:id,type:action.type,summary:actor.name+' '+(actionLabels[action.type]||'issued orders')+'.',
+  from:action.from||null,to:action.to||action.tile||null,amount:action.amount||action.count||null,kind:action.kind||null,audience};
+ if(action.type==='road'){const ids=action.edge.split('|');event.from=ids[0];event.to=ids[1];}
+ g.events.push(event);g.events=g.events.slice(-50);
+}
 export function visibility(g,id){
  const visible=new Set(),numbers=new Set(),tiles=g.tiles;
- const owned=tiles.filter(t=>t.owner===id&&(t.army>0||t.building));
+ const owned=tiles.filter(t=>t.owner===id&&(t.army>0||t.building||t.navy>0||t.boats>0));
  const ownedRoads=Object.entries(g.roads).filter(([,owner])=>owner===id).map(([key])=>key.split('|')).flat().map(x=>tileAt(g,x)).filter(Boolean);
  for(const t of tiles){
   if(owned.some(source=>dist(source,t)<=1)||owned.some(source=>source.structures.length>1&&dist(source,t)<=2)||ownedRoads.some(source=>dist(source,t)<=2))visible.add(t.id);
@@ -287,14 +334,14 @@ export function forPlayer(room,id){
   const isSeen=t.owner===id||view.visible.has(t.id);
   return {...t,number:view.numbers.has(t.id)?t.number:null,numberHidden:t.number!==null&&!view.numbers.has(t.id),
    owner:isSeen?t.owner:null,army:isSeen?t.army:0,building:isSeen?t.building:0,structures:isSeen?[...t.structures]:[],ward:isSeen?t.ward:0,attackStock:isSeen?t.attackStock:0,
-   condensed:isSeen,masked:!isSeen,bridge:isSeen?t.bridge:false};
+   navy:isSeen?t.navy:0,boats:isSeen?t.boats:0,visible:isSeen,discovered:(g.discovered[id]||[]).includes(t.id)||isSeen,condensed:isSeen,masked:!isSeen,bridge:isSeen?t.bridge:false};
  });
  const roads={};
  for(const [edge,owner] of Object.entries(g.roads)){
   const ids=edge.split('|');
   if(owner===id||ids.some(x=>view.visible.has(x)))roads[edge]=owner;
  }
- return {code:room.code,host:room.host,players,game:{...g,tiles,roads,serverNow:Date.now(),reinforcements:{[id]:g.reinforcements[id]||0},productionReserve:{[id]:g.productionReserve[id]||0},income:room.players[g.turn]?.id===id?g.income:null,scores:Object.fromEntries(room.players.map(x=>[x.id,points(g,x.id)])),
+ return {code:room.code,host:room.host,players,game:{...g,tiles,roads,serverNow:Date.now(),discovered:g.discovered[id]||[...view.visible],allocations:{[id]:{...g.allocations[id]}},events:g.events.map(e=>publicEvent(e,id)),log:g.events.length?[...g.events].reverse().map(e=>e.summary):g.log,reinforcements:{[id]:g.reinforcements[id]||0},productionReserve:{[id]:g.productionReserve[id]||0},income:room.players[g.turn]?.id===id?g.income:null,scores:Object.fromEntries(room.players.map(x=>[x.id,points(g,x.id)])),
    lastBattle:g.lastBattle&&(g.lastBattle.attacker===players.find(p=>p.id===id)?.name||g.lastBattle.defender===players.find(p=>p.id===id)?.name)?g.lastBattle:null,
    spawnChoices:g.phase==='draft'?g.spawnChoices:[],draftOrder:g.phase==='draft'?g.draftOrder:[]}};
 }

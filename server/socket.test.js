@@ -15,7 +15,7 @@ async function waitFor(socket,predicate){
  });
 }
 test('two clients share authoritative replay, reconnect safely, enforce deployment, and play against AI',{timeout:90000},async t=>{
- const child=spawn(process.execPath,['server/index.js'],{cwd:root,env:{...process.env,NODE_ENV:'production',PORT:'0'},stdio:['ignore','pipe','pipe']});
+ const child=spawn(process.execPath,['server/index.js'],{cwd:root,env:{...process.env,NODE_ENV:'production',PORT:'0',BOT_DELAY_MS:'120'},stdio:['ignore','pipe','pipe']});
  const sockets=[];
  t.after(()=>{for(const socket of sockets)socket.disconnect();child.kill();});
  const url=await new Promise((resolve,reject)=>{
@@ -58,10 +58,14 @@ test('two clients share authoritative replay, reconnect safely, enforce deployme
  await waitFor(a,s=>s?.game?.round===2&&s?.game?.turnStage==='deploy');
  const reserve=a.latest.game.reinforcements[aid],home=a.latest.game.tiles.find(t=>t.owner===aid);
  assert.ok(reserve>=2);assert.equal((await emit(a,'game:action',{type:'end'})).ok,false);
- assert.equal((await emit(a,'game:action',{type:'deploy',tile:home.id,count:1})).ok,true);
+ assert.equal((await emit(a,'game:action',{type:'allocate',tile:home.id,count:1})).ok,true);
  await waitFor(a,s=>s?.game?.reinforcements[aid]===reserve-1);
  assert.equal(a.latest.game.turnStage,'deploy');
- assert.equal((await emit(a,'game:action',{type:'deploy',tile:home.id,count:reserve-1})).ok,true);
+ assert.equal((await emit(a,'game:action',{type:'allocate',tile:home.id,count:reserve})).ok,true);
+ await waitFor(a,s=>s?.game?.reinforcements[aid]===0);
+ assert.equal(a.latest.game.turnStage,'deploy');
+ assert.equal(a.latest.game.tiles.find(t=>t.id===home.id).army,home.army);
+ assert.equal((await emit(a,'game:action',{type:'confirmDeployment'})).ok,true);
  await waitFor(a,s=>s?.game?.turnStage==='orders');
  assert.equal((await emit(a,'game:action',{type:'end'})).ok,true);
  // A separate realm confirms bot scheduling resumes after asynchronous roll completion.
@@ -76,7 +80,7 @@ test('two clients share authoritative replay, reconnect safely, enforce deployme
  await waitFor(a,s=>s?.game?.turnStage==='orders');
  assert.equal((await emit(a,'game:action',{type:'end'})).ok,true);
  await waitFor(a,s=>s?.game?.round===2&&s.game.turn===0&&s.game.turnStage==='roll');
- assert.ok(a.latest.game.scores[a.latest.players[1].id]>=3);
+ assert.ok(a.latest.game.scores[a.latest.players[1].id]>=2);
  assert.equal((await emit(a,'game:action',{type:'roll'})).ok,true);
  await waitFor(a,s=>s?.game?.round===2&&s.game.turnStage==='deploy');
  const all=a.latest.game.reinforcements[aid],target=a.latest.game.tiles.find(t=>t.owner===aid);

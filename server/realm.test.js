@@ -142,7 +142,7 @@ test('rolling locks every action and production resolves exactly once after the 
 test('deployment can be split on occupied land and all orders stay locked until reserve is empty',()=>{
  const room=start(),g=room.game,p=room.players[0];g.round=2;
  const home=g.tiles.find(t=>t.owner===p.id),land=g.tiles.find(t=>!t.owner&&RESOURCE_TERRAIN[t.terrain]);
- land.owner=p.id;land.army=1;
+ land.owner=p.id;land.army=1;land.building=1;land.structures=['outpost'];
  roll(room,p.id);
  const reserve=g.reinforcements[p.id];assert.ok(reserve>=2);
  for(const type of ['road','bridge','build','march','end'])assert.throws(()=>perform(room,p.id,{type}),/reinforcements/);

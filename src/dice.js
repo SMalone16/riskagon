@@ -86,7 +86,7 @@ export class BoardDice{
   this.lastId=roll.id;this.replay=roll;this.running=true;this.cancel();
   this.playStart=performance.now()-Math.max(0,(serverNow??Date.now())-roll.startedAt);
   // Give all players an unobstructed view of the dice on the map.
-  this.board.reset();
+  // Preserve the player’s chosen territory view during other kingdoms’ rolls.
  }
  update(now){
   if(!this.replay)return;
