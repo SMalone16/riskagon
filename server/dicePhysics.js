@@ -1,6 +1,6 @@
 import * as CANNON from 'cannon-es';
 import {randomInt,randomUUID} from 'node:crypto';
-import {DIE_SIZE,TILE_TOP,TERRAIN_PHYSICS,hexPosition,tileUnder,boundaryEdges,mountainRocks} from '../shared/boardGeometry.js';
+import {DIE_SIZE,TILE_TOP,TERRAIN_PHYSICS,hexPosition,indexTileSurfaces,boundaryEdges,mountainRocks} from '../shared/boardGeometry.js';
 const rand=(min,max)=>min+randomInt(0,1_000_000)/1_000_000*(max-min);
 const limited=(n,min,max,fallback=0)=>typeof n==='number'&&Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback;
 export const FACE_NORMALS=[[1,[0,1,0]],[6,[0,-1,0]],[3,[1,0,0]],[4,[-1,0,0]],[2,[0,0,1]],[5,[0,0,-1]]];
@@ -63,7 +63,8 @@ export function simulateRoll(count=2,throwInfo=null,tiles=fallbackTiles()){
  const sx=limited(throwInfo?.vx,-12,12),sz=limited(throwInfo?.vz??throwInfo?.vy,-12,12);
  const duration=limited(throwInfo?.durationMs,100,1200,350);
  const requested={x:limited(throwInfo?.x,-20,20),z:limited(throwInfo?.z,-20,20)};
- const clear=p=>Array.from({length:12},(_,i)=>i*Math.PI/6).every(a=>tileUnder(tiles,p.x+1.05*Math.cos(a),p.z+1.05*Math.sin(a)));
+ const surfaceAt=indexTileSurfaces(tiles);
+ const clear=p=>Array.from({length:12},(_,i)=>i*Math.PI/6).every(a=>surfaceAt(p.x+1.05*Math.cos(a),p.z+1.05*Math.sin(a)));
  // Preserve the release location unless it would spawn a cube intersecting an edge wall.
  const center=clear(requested)?requested:tiles.map(hexPosition).filter(clear).sort((a,b)=>
   Math.hypot(a.x-requested.x,a.z-requested.z)-Math.hypot(b.x-requested.x,b.z-requested.z))[0]||hexPosition(tiles[0]);
@@ -81,7 +82,7 @@ export function simulateRoll(count=2,throwInfo=null,tiles=fallbackTiles()){
  let stable=0;
  for(let step=1;step<=2880;step++){
   for(const body of bodies){
-   applyTerrain(body,tileUnder(tiles,body.position.x,body.position.z),dt);
+   applyTerrain(body,surfaceAt(body.position.x,body.position.z),dt);
    // Cocked dice get a small physical hop, never an imposed face or quaternion.
    if(step>480&&step%120===0&&body.velocity.length()<.25&&upperFace(body.quaternion.toArray()).normal.y<.985){
     body.wakeUp();body.velocity.set(rand(-4,4),4,rand(-4,4));body.angularVelocity.set(rand(-5,5),rand(-5,5),rand(-5,5));

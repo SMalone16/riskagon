@@ -41,6 +41,7 @@ export class BoardDice{
   this.mode=mode;
  }
  place(){
+  this.board.dirty=true;
   const tile=this.board.tiles.find(t=>t.owner===this.board.options.myId)||this.board.tiles.find(t=>t.terrain==='fields')||{q:0,r:0};
   const p=hexPosition(tile);
   this.dice.forEach((mesh,i)=>{mesh.position.set(p.x+(i-.5)*1.15,1.6,p.z);mesh.quaternion.identity();});
@@ -64,6 +65,7 @@ export class BoardDice{
   if(!this.dragging)return;
   e.stopImmediatePropagation();e.preventDefault();
   const {point}=this.point(e);if(!point||!tileUnder(this.board.tiles,point.x,point.z))return;
+  this.board.dirty=true;
   this.dragging.last.copy(point);
   this.dice.forEach((mesh,i)=>mesh.position.set(point.x+(i-.5)*1.1,2+i*.3,point.z));
  }
@@ -96,6 +98,7 @@ export class BoardDice{
    mesh.position.fromArray(a[i]).lerp(new THREE.Vector3().fromArray(b[i]),t);
    mesh.quaternion.fromArray(a[i],3).slerp(new THREE.Quaternion().fromArray(b[i],3),t);
   });
-  if(frame===this.replay.frames.length-1)this.running=false;
+  if(frame===this.replay.frames.length-1){this.running=false;this.replay=null;}
+  return true;
  }
 }
