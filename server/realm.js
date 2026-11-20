@@ -5,7 +5,8 @@ import {hexEdges,borderBetween} from '../shared/edges.js';
 import {randomInt} from 'node:crypto';
 import {rollPhysics,simulateRoll} from './dicePhysics.js';
 import {NAVAL_COSTS,isWater,coastal,performNaval} from './naval.js';
-export const COLORS=['blue','red','green','yellow'];
+import {BIOMES,COLORS} from '../shared/maps.js';
+export {COLORS};
 export const RESOURCES=['wood','brick','wheat','sheep','ore'];
 export const RADIUS=5;
 export const TARGET_POINTS=32;
@@ -32,9 +33,15 @@ export const axialId=(q,r)=>q+','+r;
 export const dist=(a,b)=>Math.max(Math.abs(a.q-b.q),Math.abs(a.r-b.r),Math.abs(a.q+a.r-b.q-b.r));
 export const adjacent=(a,b)=>dist(a,b)===1;
 export const edgeId=(a,b)=>[a,b].sort().join('|');
-export function generateMap(){
+// One homeland excludes at most 37 hexes (rings zero through three).
+export function mapRadius(seats){
+ let radius=RADIUS;
+ while(1+3*radius*(radius+1)<=37*(seats-1))radius++;
+ return radius;
+}
+export function generateMap(mapId='frontier',radius=RADIUS){
  const cells=[];
- for(let q=-RADIUS;q<=RADIUS;q++)for(let r=-RADIUS;r<=RADIUS;r++)if(Math.abs(q+r)<=RADIUS){
+ for(let q=-radius;q<=radius;q++)for(let r=-radius;r<=radius;r++)if(Math.abs(q+r)<=radius){
   cells.push({q,r,id:axialId(q,r),terrain:null,number:null,owner:null,army:0,building:0,structures:[],ward:0,attackStock:0,bridge:false,navy:0,boats:0});
  }
  const byId=new Map(cells.map(t=>[t.id,t]));
@@ -64,15 +71,27 @@ export function generateMap(){
  for(const id of ['-3,1','-2,1','-2,2','-1,2']){
   const t=byId.get(id);if(t)t.terrain='river';
  }
+ if(mapId==='florida'){
+  const offset=randomInt(-1,2),slant=randomInt(2,5),phase=randomInt(0,6);
+  for(const t of cells){
+   const coast=t.q+t.r/slant-offset+Math.sin((t.r+phase)*.7)*.7;
+   let biome;
+   if(t.r>radius*.32 && Math.abs(coast-(t.r-radius*.32)*.6)<1.25 && (t.r+phase)%4!==0)biome='keys';
+   else if(coast>1 || t.r>radius*.55)biome='ocean';
+   else if(coast>0)biome='beach';
+   else if(coast>-2 && Math.abs(t.r+1)<radius*.55)biome='miami';
+   else biome=t.r+Math.sin(t.q+phase)*1.2>0?'glades':'pine';
+   t.biome=biome;t.terrain=BIOMES[biome].terrain;
+  }
+ }
  const numberBag=shuffle([2,12,...Array(18).fill([3,4,5,6,8,9,10,11]).flat()].flat());
  const candidates=cells.filter(t=>RESOURCE_TERRAIN[t.terrain]);
  candidates.forEach((t,i)=>{t.number=numberBag[i%numberBag.length];});
  for(const t of shuffle(cells.filter(t=>RESOURCE_TERRAIN[t.terrain])).slice(0,4))t.tavern=true;
  return cells;
 }
-const choices=()=>['-5,0','5,0','0,-5','0,5','-5,5','5,-5','-3,-2','3,2'];
-export function newRealm(players){
- return {phase:'draft',draftStage:'color',draftOrder:players.map(p=>p.id),draftIndex:0,spawnChoices:choices(),tiles:generateMap(),roads:{},borders:{},movement:{},trade:null,provoked:{},turn:0,round:1,rolled:false,turnStage:'roll',lastRoll:null,lastBattle:null,mobilityUsed:0,reinforcements:{},productionReserve:{},allocations:{},discovered:{},events:[],eventSeq:0,pendingDice:null,winner:null,log:['Color draft is open. Choose a banner.']};
+export function newRealm(players,mapId='frontier',tiles=generateMap(mapId,mapRadius(players.length))){
+ return {phase:'draft',draftStage:'color',draftOrder:players.map(p=>p.id),draftIndex:0,spawnChoices:tiles.map(t=>t.id),tiles,mapId,roads:{},borders:{},movement:{},trade:null,provoked:{},turn:0,round:1,rolled:false,turnStage:'roll',lastRoll:null,lastBattle:null,mobilityUsed:0,reinforcements:{},productionReserve:{},allocations:{},discovered:{},events:[],eventSeq:0,pendingDice:null,winner:null,log:['Color draft is open. Choose a banner.']};
 }
 export function currentDrafter(room){
  const g=room.game;if(!g||g.phase!=='draft')return null;
@@ -91,10 +110,21 @@ export function chooseDraft(room,id,kind,value){
  }else{
   if(kind!=='spawn'||!g.spawnChoices.includes(value))throw Error('Pick one of the glowing spawn hexes.');
   const tile=tileAt(g,value);
-  if(!tile||tile.owner||['lake','river'].includes(tile.terrain))throw Error('That starting location is not available.');
+  if(!tile||tile.owner)throw Error('That starting location is not available.');
+  // A water homeland becomes a productive island. A starter ferry can reach shore.
+  const island=isWater(tile);
+  if(island){
+   tile.terrain='fields';if(g.mapId==='florida')tile.biome='keys';
+   tile.number=6+randomInt(0,2)*2;
+  }
   p.home=tile.id;tile.owner=id;tile.army=3;tile.building=1;tile.structures=['outpost'];
   p.resources={wood:1,brick:1,wheat:1,sheep:1,ore:0};
-  g.spawnChoices=g.spawnChoices.filter(x=>x!==value);
+  if(island&&!g.tiles.some(t=>adjacent(tile,t)&&!isWater(t))){
+   const water=g.tiles.find(t=>isWater(t)&&adjacent(tile,t)&&!t.owner);
+   if(water){tile.structures.push('dock');water.owner=id;water.boats=1;}
+   p.resources.wood=2; // One landing dock for the first crossing.
+  }
+  g.spawnChoices=g.tiles.filter(t=>!t.owner&&room.players.every(player=>!player.home||dist(t,tileAt(g,player.home))>3)).map(t=>t.id);
   g.log.unshift(p.name+' claimed a starting outpost.');
  }
  g.draftIndex++;
@@ -335,8 +365,8 @@ export function visibility(g,id){
 }
 export function forPlayer(room,id){
  const g=room.game;
- const players=room.players.map(p=>({id:p.id,name:p.name,color:p.color,profile:p.profile,bot:p.bot,connected:p.connected,resources:p.id===id?p.resources:null}));
- if(!g)return {code:room.code,host:room.host,players,game:null};
+ const players=room.players.map(p=>({id:p.id,name:p.name,color:p.color,bot:p.bot,connected:p.connected,resources:p.id===id?p.resources:null}));
+ if(!g)return {code:room.code,host:room.host,players,mapId:room.mapId,preview:room.preview?.map(({id,q,r,terrain,biome})=>({id,q,r,terrain,biome})),game:null};
  const view=visibility(g,id);
  const tiles=g.tiles.map(t=>{
   const isSeen=t.owner===id||view.visible.has(t.id);
