@@ -623,3 +623,18 @@ dialog .primary{
 .map-arrow{position:absolute;top:50%;transform:translateY(-50%);font-size:30px;line-height:1}
 .map-arrow.prev{left:12px}.map-arrow.next{right:12px}
 .purple{background:#aa83db}.orange{background:#e69548}.teal{background:#36cbd3}.ivory{background:#efe7d8}
+
+/* Phase instructions float above the board so changing orders never resizes the map. */
+#control.context{position:absolute;right:14px;top:70px;width:min(310px,38%);height:auto;max-height:calc(100% - 105px);overflow:auto;display:block;padding:16px;background:rgba(19,45,47,.85);backdrop-filter:blur(8px);border:1px solid #99b8a477;border-radius:12px;z-index:3}
+#control[hidden]{display:none}
+#control h2,#control .context-heading b{font-size:21px;line-height:1.2}
+#control p{font-size:15px;line-height:1.45}
+#control button{white-space:normal;min-height:36px}
+#control .actions,#control .deployment-actions,#control .builder{display:flex;flex-wrap:wrap;gap:6px}
+#control .actions:empty,#control .turn-end small{display:none}
+#control .turn-end{margin:12px 0 6px;padding:0}
+#control .province{display:flex;flex-wrap:wrap}
+#control .quantity{position:static}
+#turnClock{margin-left:8px;font-variant-numeric:tabular-nums;color:#ffdf9e}
+.harvest-particle{position:fixed;pointer-events:none;z-index:20;font-size:21px}
+@media(max-width:620px){#control.context{right:4px;top:82px;width:40%;padding:9px;max-height:calc(100% - 114px)}#control h2{font-size:17px}}

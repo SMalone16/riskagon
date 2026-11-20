@@ -1,4 +1,5 @@
 
+import {availableOrders} from './orders.js';
 import {frontierAction,answerTrade,tavernRate,wallOn} from './frontier.js';
 import {prepareMovement,ready} from './movement.js';
 import {hexEdges,borderBetween} from '../shared/edges.js';
@@ -177,11 +178,16 @@ export function finishRoll(room,now=Date.now()){
  const g=room.game;
  if(g?.turnStage!=='rolling'||now<g.lastRoll.readyAt)return false;
  const p=room.players[g.turn],sum=g.lastRoll.sum;
+ g.harvest={id:g.lastRoll.id,tiles:[]};
  for(const tile of g.tiles){
-  if(tile.number!==sum||!tile.owner)continue;
+  if(tile.number!==sum)continue;
+  const payout={tile:tile.id,resource:RESOURCE_TERRAIN[tile.terrain]};
+  if(!payout.resource)continue;
+  g.harvest.tiles.push(payout);
   const owner=room.players.find(x=>x.id===tile.owner),resource=RESOURCE_TERRAIN[tile.terrain];
   if(resource&&owner){
    const count=1+(tile.structures.includes('homes')?1:0)+(tile.structures.includes(RESOURCE_STRUCTURE[tile.terrain])?2:0);
+   payout.owner=owner.id;payout.count=count;
    owner.resources[resource]=(owner.resources[resource]||0)+count;
   }
   if(g.round>1&&owner&&resource)g.productionReserve[owner.id]=(g.productionReserve[owner.id]||0)+troopOutput(tile);
@@ -379,7 +385,28 @@ export function forPlayer(room,id){
   const ids=edge.split('|');
   if(owner===id||ids.some(x=>view.visible.has(x)))roads[edge]=owner;
  }
- return {code:room.code,host:room.host,players,game:{...g,tiles,roads,borders:Object.fromEntries(Object.entries(g.borders||{}).filter(([key,b])=>b.road===id||b.wall?.owner===id||g.tiles.some(t=>view.visible.has(t.id)&&hexEdges(t).some(e=>e.key===key)))),movement:undefined,provoked:undefined,trade:g.trade&&(g.trade.from===id||g.trade.to===id)?g.trade:null,serverNow:Date.now(),discovered:g.discovered[id]||[...view.visible],allocations:{[id]:{...g.allocations[id]}},events:g.events.map(e=>publicEvent(e,id)),log:g.events.length?[...g.events].reverse().map(e=>e.summary):g.log,reinforcements:{[id]:g.reinforcements[id]||0},productionReserve:{[id]:g.productionReserve[id]||0},income:room.players[g.turn]?.id===id?g.income:null,scores:Object.fromEntries(room.players.map(x=>[x.id,points(g,x.id)])),
+ return {code:room.code,host:room.host,players,game:{...g,orders:room.players[g.turn]?.id===id?room.orders||[]:[],harvest:g.harvest&&{id:g.harvest.id,tiles:g.harvest.tiles.map(h=>({tile:h.tile,resource:h.resource,count:h.owner===id?h.count:0}))},tiles,roads,borders:Object.fromEntries(Object.entries(g.borders||{}).filter(([key,b])=>b.road===id||b.wall?.owner===id||g.tiles.some(t=>view.visible.has(t.id)&&hexEdges(t).some(e=>e.key===key)))),movement:undefined,provoked:undefined,trade:g.trade&&(g.trade.from===id||g.trade.to===id)?g.trade:null,serverNow:Date.now(),discovered:g.discovered[id]||[...view.visible],allocations:{[id]:{...g.allocations[id]}},events:g.events.map(e=>publicEvent(e,id)),log:g.events.length?[...g.events].reverse().map(e=>e.summary):g.log,reinforcements:{[id]:g.reinforcements[id]||0},productionReserve:{[id]:g.productionReserve[id]||0},income:room.players[g.turn]?.id===id?g.income:null,scores:Object.fromEntries(room.players.map(x=>[x.id,points(g,x.id)])),
    lastBattle:g.lastBattle&&(g.lastBattle.attacker===players.find(p=>p.id===id)?.name||g.lastBattle.defender===players.find(p=>p.id===id)?.name)?g.lastBattle:null,
    spawnChoices:g.phase==='draft'?g.spawnChoices:[],draftOrder:g.phase==='draft'?g.draftOrder:[]}};
+}
+
+export function turnSeconds(room){
+ const p=room.players[room.game.turn],tiles=room.game.tiles.filter(t=>t.owner===p.id);
+ const troops=tiles.reduce((n,t)=>n+t.army+t.navy,0);
+ return Math.min(150,60+2*Math.max(0,tiles.length-1)+Math.ceil(Math.max(0,troops-3)/2)+Math.floor(Object.values(p.resources).reduce((a,b)=>a+b,0)/5));
+}
+export function settleTurn(room,expired=false){
+ const g=room.game;
+ room.orders=[];
+ if(g?.phase!=='playing')return;
+ const id=room.players[g.turn].id;
+ if(expired&&g.turnStage==='roll'){g.rolled=true;g.turnStage='orders';}
+ if(expired&&g.turnStage==='deploy'){
+  const tile=g.tiles.find(t=>t.owner===id&&t.building&&!isWater(t));
+  if(g.reinforcements[id])perform(room,id,{type:'allocate',tile:tile.id,count:(g.allocations[id]?.[tile.id]||0)+g.reinforcements[id]});
+  perform(room,id,{type:'confirmDeployment'});
+ }
+ if(g.turnStage!=='orders')return;
+ if(!expired)room.orders=availableOrders(room,COSTS,RESOURCE_STRUCTURE);
+ if(expired||(!room.orders.length&&!g.trade))perform(room,id,{type:'end'});
 }

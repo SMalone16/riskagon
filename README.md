@@ -30,3 +30,7 @@ Reach **32 victory points** through territory, buildings and upgrades. Open **Ru
 ## Local development
 
 Use Node.js 20 or later. Run `npm ci` and `npm run dev`, then open `http://localhost:3000`. The board includes fallback art and bundled Miami models. Run `npm run assets:sync` for optional medieval models. Use `npm test` to check the rules and multiplayer flow, and `npm run build` for the production client. Rooms live in server memory and end when the server stops.
+
+Invite links prefill the room code. Each new player enters a name and clicks **Join**. During play, the side panel follows the current phase. Matching tiles celebrate after the dice settle, and each owner sees their own earnings fly into the treasury.
+
+A turn starts at 60 seconds. Each territory after the first adds two seconds, each pair of troops above three adds one (rounded up), and every five banked resources add one, up to 150 seconds. Running out of legal orders passes play immediately. At timeout, an unmade roll is skipped, an in-flight roll finishes, and unplaced reinforcements go to an owned outpost or settlement before play passes.
