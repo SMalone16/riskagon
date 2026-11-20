@@ -1,4 +1,4 @@
-import {hexEdges,vertexPosition} from '../shared/edges.js';
+import {vertexPosition} from '../shared/edges.js';
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
@@ -431,7 +431,7 @@ export class Board{
    const {root}=this.tileMeshes.get(id);root.removeFromParent();disposeGroup(root);this.tileMeshes.delete(id);
   }
   const overlayKey=JSON.stringify([tiles.map(t=>[t.id,t.q,t.r,t.terrain,t.owner,Boolean(t.army||t.navy)]),
-   options.myId,roadMode,options.borderMode,options.originVertex,options.roads,options.borders,[...colorsByPlayer]]);
+   options.myId,roadMode,options.borderMode,options.validEdges,options.originVertex,options.roads,options.borders,[...colorsByPlayer]]);
   if(overlayKey===this.overlayKey){this.pickables.push(...this.overlayPickables);return;}
   this.overlayKey=overlayKey;
   disposeGroup(this.overlays);
@@ -444,7 +444,8 @@ export class Board{
    mesh(new THREE.CylinderGeometry(.01,rock.radius,rock.height,6),makeMat(0x839496),this.overlays,rock.x,.16+rock.height/2,rock.z);
   }
   const vertices=new Set();
-  if(options.borderMode)for(const tile of tiles.filter(t=>t.owner===options.myId&&(t.army||t.navy)))for(const edge of hexEdges(tile))for(const key of [edge.a,edge.b]){
+  for(const edge of options.validEdges||[])for(const key of edge.split('~')){
+   if(options.originVertex&&!edge.split('~').includes(options.originVertex))continue;
    if(vertices.has(key))continue;vertices.add(key);const p=vertexPosition(key);
    const point=mesh(new THREE.SphereGeometry(.13,10,8),makeMat(options.originVertex===key?0xff8866:0xffed9f),this.overlays,p.x,.4,p.z);point.userData.vertex=key;this.pickables.push(point);
   }

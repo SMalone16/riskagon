@@ -6,7 +6,7 @@ import {PROFILES} from '../shared/profiles.js';
 import {chooseBotAction} from './bot.js';
 import {MAPS} from '../shared/maps.js';
 import {randomBytes,randomInt} from 'node:crypto';
-import {generateMap,mapRadius,newRealm,currentDrafter,chooseDraft,perform,finishRoll,forPlayer,adjacent,dist,COLORS} from './realm.js';
+import {turnSeconds,settleTurn,generateMap,mapRadius,newRealm,currentDrafter,chooseDraft,perform,finishRoll,forPlayer,adjacent,dist,COLORS} from './realm.js';
 const app=express(),server=createServer(app),io=new Server(server,{maxHttpBufferSize:100_000});
 const rooms=new Map();
 const clean=x=>typeof x==='string'?x.trim().replace(/[<>]/g,'').slice(0,32):'';
@@ -17,6 +17,16 @@ const send=room=>{
 const code=()=>{let id;do{id=randomBytes(3).toString('hex').toUpperCase();}while(rooms.has(id));return id;};
 function advance(room){
  if(room.game?.trade){const target=room.players.find(p=>p.id===room.game.trade.to);if(target?.bot){try{perform(room,target.id,{type:room.game.trade.giveCount>=room.game.trade.receiveCount?'acceptTrade':'rejectTrade'});}catch{perform(room,target.id,{type:'rejectTrade'});}}}
+ const g=room.game;
+ if(g?.phase==='playing'){
+  const key=()=>g.round+'-'+g.turn;
+  settleTurn(room,room.clockKey===key()&&Date.now()>=g.deadline);
+  if(room.clockKey!==key()){
+   clearTimeout(room.clockTimer);room.clockKey=key();
+   g.deadline=Date.now()+turnSeconds(room)*1000;
+   room.clockTimer=setTimeout(()=>advance(room),g.deadline-Date.now());
+  }
+ }else clearTimeout(room.clockTimer);
  send(room);
  if(room.game?.turnStage==='rolling'){
   if(!room.rollTimer)room.rollTimer=setTimeout(()=>{
@@ -68,7 +78,8 @@ function refreshPreview(room){
 app.get('/api/health',(_req,res)=>res.json({ok:true,rooms:rooms.size,app:'riskagon',version:'0.5.0'}));
 io.on('connection',socket=>{
  socket.on('room:create',({id,name}={},reply=()=>{})=>{
-  id=clean(id);name=clean(name)||'Commander';
+  id=clean(id);name=clean(name).trim().slice(0,24);
+  if(!name)return reply({ok:false,error:'Enter a player name first.'});
   if(id.length<8)return reply({ok:false,error:'Invalid session identity.'});
   const roomCode=code();
   const room={code:roomCode,host:id,players:[{id,name,connected:true,bot:false,color:null,resources:{}}],game:null,botBusy:false};
@@ -78,7 +89,8 @@ io.on('connection',socket=>{
   reply({ok:true,code:roomCode});send(room);
  });
  socket.on('room:join',({code:roomCode,id,name}={},reply=()=>{})=>{
-  roomCode=clean(roomCode).toUpperCase();id=clean(id);name=clean(name)||'Commander';
+  roomCode=clean(roomCode).toUpperCase();id=clean(id);name=clean(name).trim().slice(0,24);
+  if(!name)return reply({ok:false,error:'Enter a player name first.'});
   const room=rooms.get(roomCode);
   if(!room)return reply({ok:false,error:'This realm does not exist or the server restarted.'});
   if(id.length<8)return reply({ok:false,error:'Invalid session identity.'});
@@ -122,6 +134,7 @@ io.on('connection',socket=>{
  socket.on('game:action',(data={},reply=()=>{})=>{
   const room=rooms.get(socket.data.code);
   if(!room)return reply({ok:false,error:'Join a room first.'});
+  if(room.game?.phase==='playing'&&Date.now()>=room.game.deadline){advance(room);return reply({ok:false,error:'Turn time expired.'});}
   try{perform(room,socket.data.id,data);reply({ok:true,roll:room.game.lastRoll,battle:room.game.lastBattle});advance(room);}
   catch(e){reply({ok:false,error:e.message});}
  });
