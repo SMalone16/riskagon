@@ -78,7 +78,7 @@ const board=new Board($('#board'),tile=>{
  if(!originVertex){originVertex=edge.vertex;render();return;}
  act({type:borderMode==='road'?'road':borderMode==='gate'?'gate':'edgeWall',vertices:[originVertex,edge.vertex],material:borderMode,tile:selected});originVertex=null;render();
 });
-board.onHover=tile=>{$('#mapGuide').textContent=tile?`${kinds[tile.terrain]} · ${tile.numberHidden?'Number undiscovered':'Roll '+(tile.number??'—')} · ${own&&tile.moveReady?'Ready: '+(isWater(tile)?tile.moveReady.navy:tile.moveReady.army)+' troops · ':''}${tile.masked?'Unscouted':isWater(tile)?(tile.boats||0)+' boats · '+(tile.navy||0)+' naval troops':tile.army+' troops'}`:'WASD / arrows to pan · Scroll to zoom · Hover to inspect';};
+board.onHover=tile=>{$('#mapGuide').textContent=tile?`${kinds[tile.terrain]} · ${tile.numberHidden?'Number undiscovered':'Roll '+(tile.number??'—')} · ${tile.owner===id&&tile.moveReady?'Ready: '+(isWater(tile)?tile.moveReady.navy:tile.moveReady.army)+' troops · ':''}${tile.masked?'Unscouted':isWater(tile)?(tile.boats||0)+' boats · '+(tile.navy||0)+' naval troops':tile.army+' troops'}`:'WASD / arrows to pan · Scroll to zoom · Hover to inspect';};
 board.update(preview(),{});
 const dice=new BoardDice(board,throwData=>new Promise((resolve,reject)=>{
  socket.timeout(15000).emit('game:action',{type:'roll',throw:throwData},(error,r)=>{if(error||!r?.ok){reject(Error(r?.error||'Roll interrupted. Try again.'));return;}resolve();});

@@ -126,6 +126,19 @@ function textSprite(text,color='#453f30',bg='#f7e7c5',size=.37){
  const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,depthTest:false}));
  sprite.scale.set(size,size,1);return sprite;
 }
+function belongsTo(object,ancestor){
+ for(let node=object;node;node=node.parent)if(node===ancestor)return true;
+ return false;
+}
+function disposeGroup(group){
+ group.traverse(object=>{
+  if(object.userData.prefab){object.skeleton?.dispose();return;}
+  object.geometry?.dispose();
+  const materials=Array.isArray(object.material)?object.material:[object.material];
+  for(const material of materials)if(material){material.map?.dispose();material.dispose();}
+ });
+ group.clear();
+}
 export class Board{
  constructor(container,selectTile,selectEdge){
   this.container=container;this.selectTile=selectTile;this.selectEdge=selectEdge;
@@ -155,8 +168,10 @@ export class Board{
   const rim=mesh(new THREE.CylinderGeometry(12.2,12.6,.23,64),makeMat(0x405f57),this.world,0,-.35,0);
   rim.scale.set(1,.5,.91);rim.castShadow=false;
   this.board=new THREE.Group();this.world.add(this.board);
+  this.tileMeshes=new Map();this.overlays=new THREE.Group();this.board.add(this.overlays);
+  this.controls.addEventListener('change',()=>{this.dirty=true;});
   this.pickables=[];this.ray=new THREE.Raycaster();this.pointer=new THREE.Vector2();
-  this.loader=new GLTFLoader();this.models=new Map();this.characterModels=new Map();this.kaykit=false;this.version=0;
+  this.loader=new GLTFLoader();this.models=new Map();this.characterModels=new Map();this.kaykit=false;
   this.tiles=[];this.options={};this.hover=null;this.pointerDown=null;this.keys=new Set();this.effects=[];
   this.hoverOutline=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(Array.from({length:6},(_,i)=>new THREE.Vector3(Math.sin(i*Math.PI/3)*1.025,0,Math.cos(i*Math.PI/3)*1.025))),new THREE.LineBasicMaterial({color:0xfff2b5,depthTest:false}));
   this.hoverOutline.visible=false;this.hoverOutline.renderOrder=20;this.scene.add(this.hoverOutline);
@@ -175,7 +190,8 @@ export class Board{
   this.renderer.domElement.addEventListener('pointermove',e=>{
    const hit=this.hit(e);const target=hit?.object?.userData;
    this.renderer.domElement.style.cursor=target?.tile||target?.edge?'pointer':'grab';
-   this.hover=target?.tile||null;this.refreshHover();this.onHover?.(this.tiles.find(t=>t.id===this.hover));
+   const hovered=target?.tile||null;if(hovered===this.hover)return;
+   this.hover=hovered;this.refreshHover();this.onHover?.(this.tiles.find(t=>t.id===this.hover));
   });
   this.renderer.domElement.addEventListener('pointerleave',()=>{this.hover=null;this.refreshHover();this.onHover?.(null);});
   this.renderer.domElement.addEventListener('pointerup',e=>{
@@ -195,6 +211,7 @@ export class Board{
   return this.ray.intersectObjects(this.pickables,false)[0]||null;
  }
  resize(){
+  this.dirty=true;
   const w=Math.max(1,this.container.clientWidth),h=Math.max(1,this.container.clientHeight);
   const size=13.0,aspect=w/h;
   this.camera.left=-size*aspect;this.camera.right=size*aspect;
@@ -202,6 +219,7 @@ export class Board{
   this.camera.updateProjectionMatrix();this.renderer.setSize(w,h);
  }
  refreshHover(){
+  this.dirty=true;
   const tile=this.tiles.find(t=>t.id===this.hover);this.hoverOutline.visible=!!tile;
   if(tile){this.hoverOutline.position.copy(pos(tile));this.hoverOutline.position.y=.2;}
  }
@@ -240,10 +258,10 @@ export class Board{
  }
  decorateWithPrefab(holder,relative,scale=1){
   if(!this.kaykit)return;
-  const version=this.version;
+
   this.prefab(relative).then(model=>{
-   if(!model||version!==this.version)return;
-   model.traverse(o=>o.userData.prefab=true);holder.clear();model.scale.setScalar(scale);holder.add(model);
+   if(!model||!belongsTo(holder,this.board))return;
+   model.traverse(o=>o.userData.prefab=true);disposeGroup(holder);this.dirty=true;model.scale.setScalar(scale);holder.add(model);
   });
  }
  focus(id){
@@ -262,13 +280,13 @@ export class Board{
  }
  attachCharacter(holder,name,color,desiredHeight=.66){
   if(!this.kaykit)return;
-  const version=this.version;
+
   this.character(name).then(model=>{
-   if(!model||version!==this.version)return;
+   if(!model||!belongsTo(holder,this.board))return;
    const bounds=new THREE.Box3().setFromObject(model),height=bounds.getSize(new THREE.Vector3()).y;
    if(!height||!Number.isFinite(height))return;
    const scale=desiredHeight/height;
-   model.traverse(o=>o.userData.prefab=true);holder.clear();model.scale.setScalar(scale);
+   model.traverse(o=>o.userData.prefab=true);disposeGroup(holder);this.dirty=true;model.scale.setScalar(scale);
    model.position.y=-bounds.min.y*scale;
    model.traverse(object=>{if(object.isMesh){object.castShadow=true;object.receiveShadow=true;}});
    holder.add(model);
@@ -278,30 +296,27 @@ export class Board{
   });
  }
  update(tiles=[],options={}){
-  this.version++;this.tiles=tiles;this.options=options;
-  // Dispose rebuilt procedural geometry/materials; cached prefab resources are shared.
-  this.board.traverse(object=>{
-   if(object.userData.prefab)return;
-   object.geometry?.dispose();
-   const materials=Array.isArray(object.material)?object.material:[object.material];
-   materials.filter(Boolean).forEach(material=>{material.map?.dispose();material.dispose();});
-  });
-  this.board.clear();this.pickables=[];
+  this.tiles=tiles;this.options=options;
+  this.pickables=[];
+  const remaining=new Set(this.tileMeshes.keys());
+  const colorsByPlayer=new Map((options.players||[]).map(player=>[player.id,player.color]));
   const selected=options.selected,roadMode=options.roadMode;
   this.refreshHover();
-  for(const edge of boundaryEdges(tiles)){
-   const rail=mesh(new THREE.BoxGeometry(1.13,.25,.13),makeMat(0x496b63),this.board,edge.x,.28,edge.z);
-   rail.rotation.y=edge.angle;
-  }
-  for(const tile of tiles.filter(t=>t.terrain==='mountains'))for(const rock of mountainRocks(tile)){
-   mesh(new THREE.CylinderGeometry(.01,rock.radius,rock.height,6),makeMat(0x839496),this.board,rock.x,.16+rock.height/2,rock.z);
-  }
+  if(this.hover)this.onHover?.(tiles.find(t=>t.id===this.hover));
   for(const tile of tiles){
+   remaining.delete(tile.id);
+   const signature=JSON.stringify([tile,this.kaykit,colorsByPlayer.get(tile.owner),colorsByPlayer.get(tile.bridge),
+    selected===tile.id,options.destinations?.includes(tile.id),Boolean(options.deploy),options.myId,
+    options.allocations?.[tile.id],options.spawnChoices?.includes(tile.id)]);
+   const previous=this.tileMeshes.get(tile.id);
+   if(previous?.signature===signature){this.pickables.push(previous.base);continue;}
+   if(previous){previous.root.removeFromParent();disposeGroup(previous.root);}
    const root=new THREE.Group();root.position.copy(pos(tile));this.board.add(root);
    const colors=TERRAIN[tile.terrain]||TERRAIN.desert;
    const base=mesh(new THREE.CylinderGeometry(1,1,.32,6),[
       makeMat(colors.side),makeMat(colors.top),makeMat(colors.side)
    ],root,0,0,0);
+   this.tileMeshes.set(tile.id,{signature,root,base});
    base.userData.tile=tile.id;this.pickables.push(base);
    const top=new THREE.Group();top.position.y=.17;root.add(top);
    if(selected===tile.id||options.destinations?.includes(tile.id)||options.deploy&&tile.owner===options.myId&&tile.building){
@@ -384,19 +399,35 @@ export class Board{
     const sign=textSprite('★','#3a493d','#f6d78c',.44);sign.position.set(0,.8,0);top.add(sign);
    }
   }
+  for(const id of remaining){
+   const {root}=this.tileMeshes.get(id);root.removeFromParent();disposeGroup(root);this.tileMeshes.delete(id);
+  }
+  const overlayKey=JSON.stringify([tiles.map(t=>[t.id,t.q,t.r,t.terrain,t.owner,Boolean(t.army||t.navy)]),
+   options.myId,roadMode,options.borderMode,options.originVertex,options.roads,options.borders,[...colorsByPlayer]]);
+  if(overlayKey===this.overlayKey){this.pickables.push(...this.overlayPickables);return;}
+  this.overlayKey=overlayKey;
+  disposeGroup(this.overlays);
+  const tilePickCount=this.pickables.length;
+  for(const edge of boundaryEdges(tiles)){
+   const rail=mesh(new THREE.BoxGeometry(1.13,.25,.13),makeMat(0x496b63),this.overlays,edge.x,.28,edge.z);
+   rail.rotation.y=edge.angle;
+  }
+  for(const tile of tiles.filter(t=>t.terrain==='mountains'))for(const rock of mountainRocks(tile)){
+   mesh(new THREE.CylinderGeometry(.01,rock.radius,rock.height,6),makeMat(0x839496),this.overlays,rock.x,.16+rock.height/2,rock.z);
+  }
   const vertices=new Set();
   if(options.borderMode)for(const tile of tiles.filter(t=>t.owner===options.myId&&(t.army||t.navy)))for(const edge of hexEdges(tile))for(const key of [edge.a,edge.b]){
    if(vertices.has(key))continue;vertices.add(key);const p=vertexPosition(key);
-   const point=mesh(new THREE.SphereGeometry(.13,10,8),makeMat(options.originVertex===key?0xff8866:0xffed9f),this.board,p.x,.4,p.z);point.userData.vertex=key;this.pickables.push(point);
+   const point=mesh(new THREE.SphereGeometry(.13,10,8),makeMat(options.originVertex===key?0xff8866:0xffed9f),this.overlays,p.x,.4,p.z);point.userData.vertex=key;this.pickables.push(point);
   }
   for(const [key,border] of Object.entries(options.borders||{})){
    const [a,b]=key.split('~').map(vertexPosition);if(!a||!b)continue;
    const length=Math.hypot(a.x-b.x,a.z-b.z),angle=Math.atan2(-(b.z-a.z),b.x-a.x);
    const road=border.road,wall=border.wall,gate=border.gate;
-   if(road){const m=mesh(new THREE.BoxGeometry(length,.06,.16),makeMat(0xc5a473),this.board,(a.x+b.x)/2,.23,(a.z+b.z)/2);m.rotation.y=angle;}
-   if(wall){for(const part of gate?[-1,1]:[0]){const fraction=gate?.30:1,offset=part*.34;const m=mesh(new THREE.BoxGeometry(length*fraction,.48,.16),makeMat(wall.material==='stone'?0x87959d:0x99663f),this.board,(a.x+b.x)/2+(b.x-a.x)*offset,.42,(a.z+b.z)/2+(b.z-a.z)*offset);m.rotation.y=angle;}}
-   if(wall){const hp=textSprite(String(wall.hp),'#fff','#4b5e60',.28);hp.position.set((a.x+b.x)/2,.8,(a.z+b.z)/2);this.board.add(hp);}
-   if(gate){const marker=textSprite('G','#fff','#45715c',.3);marker.position.set((a.x+b.x)/2,.8,(a.z+b.z)/2);this.board.add(marker);}
+   if(road){const m=mesh(new THREE.BoxGeometry(length,.06,.16),makeMat(0xc5a473),this.overlays,(a.x+b.x)/2,.23,(a.z+b.z)/2);m.rotation.y=angle;}
+   if(wall){for(const part of gate?[-1,1]:[0]){const fraction=gate?.30:1,offset=part*.34;const m=mesh(new THREE.BoxGeometry(length*fraction,.48,.16),makeMat(wall.material==='stone'?0x87959d:0x99663f),this.overlays,(a.x+b.x)/2+(b.x-a.x)*offset,.42,(a.z+b.z)/2+(b.z-a.z)*offset);m.rotation.y=angle;}}
+   if(wall){const hp=textSprite(String(wall.hp),'#fff','#4b5e60',.28);hp.position.set((a.x+b.x)/2,.8,(a.z+b.z)/2);this.overlays.add(hp);}
+   if(gate){const marker=textSprite('G','#fff','#45715c',.3);marker.position.set((a.x+b.x)/2,.8,(a.z+b.z)/2);this.overlays.add(marker);}
   }
   const shownEdges=new Set();
   for(const tile of tiles){
@@ -413,26 +444,28 @@ export class Board{
     const eligible=roadMode&&!owner&&(tile.owner===options.myId||other.owner===options.myId)&&!['lake','river'].includes(tile.terrain)&&!['lake','river'].includes(other.terrain);
     if(!owner&&!eligible)continue;
     const color=owner?(FACTIONS[(options.players||[]).find(p=>p.id===owner)?.color]||0xb38a5e):0xffe09b;
-    const road=mesh(new THREE.BoxGeometry(1.13,.10,owner?.21:.13),makeMat(color),this.board,mid.x,.29,mid.z);
+    const road=mesh(new THREE.BoxGeometry(1.13,.10,owner?.21:.13),makeMat(color),this.overlays,mid.x,.29,mid.z);
     road.quaternion.setFromUnitVectors(new THREE.Vector3(1,0,0),direction);
     if(owner){
       // Short sleeper beams make roads look like deliberate border fortifications.
       for(const n of [-.29,0,.29]){
-       const sleeper=mesh(new THREE.BoxGeometry(.07,.075,.27),makeMat(0x7b5941),this.board,mid.x+direction.x*n,.35,mid.z+direction.z*n);
+       const sleeper=mesh(new THREE.BoxGeometry(.07,.075,.27),makeMat(0x7b5941),this.overlays,mid.x+direction.x*n,.35,mid.z+direction.z*n);
        sleeper.quaternion.copy(road.quaternion);
       }
     }else{road.material.transparent=true;road.material.opacity=.5;}
     if(eligible){
-     const plus=textSprite('+','#4a4a38','#fff0b4',.28);plus.position.set(mid.x,.7,mid.z);this.board.add(plus);
+     const plus=textSprite('+','#4a4a38','#fff0b4',.28);plus.position.set(mid.x,.7,mid.z);this.overlays.add(plus);
      const hitbox=new THREE.Mesh(new THREE.BoxGeometry(1.3,.21,.40),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));
      hitbox.position.set(mid.x,.48,mid.z);hitbox.quaternion.copy(road.quaternion);
-     hitbox.userData.edge=edge;this.board.add(hitbox);this.pickables.push(hitbox);
+     hitbox.userData.edge=edge;this.overlays.add(hitbox);this.pickables.push(hitbox);
     }
    }
   }
+  this.overlayPickables=this.pickables.slice(tilePickCount);
  }
  animate(){
-  this.onFrame?.(performance.now());
+  const diceChanged=this.onFrame?.(performance.now());
+  const effectsChanged=this.effects.length>0;
   this.controls.update();
   const now=performance.now(),dt=Math.min(.05,(now-this.lastFrame)/1000);this.lastFrame=now;
   if(this.keys.size){
@@ -451,7 +484,7 @@ export class Board{
    if(t===1){this.scene.remove(effect.mesh);effect.mesh.traverse(o=>{o.geometry?.dispose();if(o.material&&!Array.isArray(o.material))o.material.dispose();});}
   }
   this.effects=this.effects.filter(e=>now-e.began<1200);
-  this.renderer.render(this.scene,this.camera);
+  if(this.dirty||diceChanged||effectsChanged){this.renderer.render(this.scene,this.camera);this.dirty=false;}
   this.frame=requestAnimationFrame(()=>this.animate());
  }
  destroy(){window.removeEventListener('keydown',this.keyDown);window.removeEventListener('keyup',this.keyUp);window.removeEventListener('blur',this.blur);cancelAnimationFrame(this.frame);this.resizeObs.disconnect();this.controls.dispose();this.renderer.dispose();}

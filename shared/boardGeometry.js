@@ -19,6 +19,31 @@ export function tileUnder(tiles,x,z){
   return dx<=Math.sqrt(3)/2+.001 && dz+dx/Math.sqrt(3)<=1.001;
  });
 }
+// Rows and columns are spaced farther apart than a hex half-extent.
+// Check both surrounding coordinates to preserve tileUnder's edge tolerance and input-order ties.
+export function indexTileSurfaces(tiles){
+ const rows=new Map();
+ tiles.forEach((tile,index)=>{
+  if(!rows.has(tile.r))rows.set(tile.r,new Map());
+  rows.get(tile.r).set(tile.q,{tile,index,...hexPosition(tile)});
+ });
+ return (x,z)=>{
+  let first;
+  const row=Math.floor(z/1.5);
+  for(let r=row;r<=row+1;r++){
+   const columns=rows.get(r);
+   if(!columns)continue;
+   const column=Math.floor(x/Math.sqrt(3)-r/2);
+   for(let q=column;q<=column+1;q++){
+    const entry=columns.get(q);
+    if(!entry)continue;
+    const dx=Math.abs(x-entry.x),dz=Math.abs(z-entry.z);
+    if(dx<=Math.sqrt(3)/2+.001 && dz+dx/Math.sqrt(3)<=1.001 && (!first||entry.index<first.index))first=entry;
+   }
+  }
+  return first?.tile;
+ };
+}
 export function boundaryEdges(tiles){
  const ids=new Set(tiles.map(t=>`${t.q},${t.r}`));
  return tiles.flatMap(t=>DIRECTIONS.flatMap(([q,r])=>{
