@@ -32,8 +32,17 @@ test('two clients share authoritative replay, reconnect safely, enforce deployme
  assert.equal((await emit(a,'room:create',{id:aid,name:'Alpha'})).ok,true);
  await waitFor(a,s=>s?.code);const code=a.latest.code;
  assert.equal((await emit(b,'room:join',{code,id:bid,name:'Beta'})).ok,true);
+ assert.equal((await emit(b,'room:map',{mapId:'florida'})).ok,false);
+ assert.equal((await emit(a,'room:map',{mapId:'florida'})).ok,true);
+ const preview=(await waitFor(b,s=>s?.mapId==='florida')).preview;
+ assert.ok(preview.every(t=>!('tavern' in t)&&!('number' in t)));
+ // Switch back before exercising the original frontier scenario below.
+ assert.equal((await emit(a,'room:map',{mapId:'frontier'})).ok,true);
+ const original=(await waitFor(b,s=>s?.mapId==='frontier')).preview;
  assert.equal((await emit(a,'room:start')).ok,true);
  await waitFor(a,s=>s?.game?.phase==='draft');
+ assert.deepEqual(a.latest.game.tiles.map(({id,terrain})=>[id,terrain]),original.map(t=>[t.id,t.terrain]));
+ assert.equal((await emit(a,'room:map',{mapId:'florida'})).ok,false);
  assert.equal((await emit(a,'draft:pick',{kind:'color',value:'blue'})).ok,true);
  assert.equal((await emit(b,'draft:pick',{kind:'color',value:'red'})).ok,true);
  assert.equal((await emit(b,'draft:pick',{kind:'spawn',value:'5,0'})).ok,true);

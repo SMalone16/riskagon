@@ -41,3 +41,7 @@
 ## Character model integration (v0.2)
 
 The automated sync downloads Knight.glb, Rogue.glb and Barbarian.glb from the official [KayKit Adventurers GitHub repository](https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0) to `public/assets/kaykit/characters/` and preserves `LICENSE-ADVENTURERS.txt` (CC0-1.0). `src/board.js` loads and skeleton-clones each character with `GLTFLoader` and `SkeletonUtils.clone`; the model height is normalized to the board, and a team-colored pedestal marks ownership. Full idle/movement/combat animation mixer support remains planned. All players can still see functioning Three.js fallback models if the asset pack is missing.
+
+## Biscayne & the Keys
+
+The two Miami buildings and their shared texture in `public/assets/biscayne/` come from Kay Lousberg's [KayKit City Builder Bits 1.0](https://github.com/KayKit-Game-Assets/KayKit-City-Builder-Bits-1.0/tree/63976910ca04d16f0fc531b9c614244be8128713). The original CC0 license is bundled alongside the models. Palms, reeds, beach umbrellas, pines and wave marks are drawn with the board's existing low-poly primitives.

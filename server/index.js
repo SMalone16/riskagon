@@ -4,8 +4,9 @@ import {createServer} from 'node:http';
 import {Server} from 'socket.io';
 import {PROFILES} from '../shared/profiles.js';
 import {chooseBotAction} from './bot.js';
-import {randomBytes} from 'node:crypto';
-import {newRealm,currentDrafter,chooseDraft,perform,finishRoll,forPlayer,adjacent,dist,COLORS} from './realm.js';
+import {MAPS} from '../shared/maps.js';
+import {randomBytes,randomInt} from 'node:crypto';
+import {generateMap,mapRadius,newRealm,currentDrafter,chooseDraft,perform,finishRoll,forPlayer,adjacent,dist,COLORS} from './realm.js';
 const app=express(),server=createServer(app),io=new Server(server,{maxHttpBufferSize:100_000});
 const rooms=new Map();
 const clean=x=>typeof x==='string'?x.trim().replace(/[<>]/g,'').slice(0,32):'';
@@ -59,6 +60,11 @@ function scheduleBot(room){
   advance(room);
  },Number(process.env.BOT_DELAY_MS)||1600);
 }
+function refreshPreview(room){
+ const radius=mapRadius(room.players.length);
+ if(room.previewRadius===radius && room.previewMap===room.mapId)return;
+ room.preview=generateMap(room.mapId,radius);room.previewMap=room.mapId;room.previewRadius=radius;
+}
 app.get('/api/health',(_req,res)=>res.json({ok:true,rooms:rooms.size,app:'riskagon',version:'0.5.0'}));
 io.on('connection',socket=>{
  socket.on('room:create',({id,name}={},reply=()=>{})=>{
@@ -66,6 +72,7 @@ io.on('connection',socket=>{
   if(id.length<8)return reply({ok:false,error:'Invalid session identity.'});
   const roomCode=code();
   const room={code:roomCode,host:id,players:[{id,name,connected:true,bot:false,color:null,resources:{}}],game:null,botBusy:false};
+  room.mapId='frontier';refreshPreview(room);
   rooms.set(roomCode,room);
   socket.data={code:roomCode,id};socket.join(roomCode);
   reply({ok:true,code:roomCode});send(room);
@@ -78,25 +85,32 @@ io.on('connection',socket=>{
   let p=seat(room,id);
   if(!p){
    if(room.game)return reply({ok:false,error:'This match is already underway. Ask for the next game.'});
-   if(room.players.length===4)return reply({ok:false,error:'This room is full.'});
+   if(room.players.length>=COLORS.length)return reply({ok:false,error:'This room is full.'});
    p={id,name,connected:true,bot:false,color:null,resources:{}};
-   room.players.push(p);
+   room.players.push(p);refreshPreview(room);
   }else{p.connected=true;}
   socket.data={code:roomCode,id};socket.join(roomCode);
   reply({ok:true,code:roomCode});advance(room);
  });
- socket.on('room:addBot',({profile='steady'}={},reply=()=>{})=>{
+ socket.on('room:addBot',(_={},reply=()=>{})=>{
   const room=rooms.get(socket.data.code);
   if(!room||room.host!==socket.data.id)return reply({ok:false,error:'Only the host can invite AI.'});
-  if(room.game||room.players.length>=4)return reply({ok:false,error:'Game started or room full.'});
-  room.players.push({id:'bot-'+randomBytes(7).toString('hex'),profile:PROFILES[profile]?profile:'steady',name:(PROFILES[profile]||'Slow and steady')+' AI',color:null,connected:true,bot:true,resources:{}});
+  if(room.game||room.players.length>=COLORS.length)return reply({ok:false,error:'Game started or room full.'});
+  const profiles=Object.keys(PROFILES);
+  room.players.push({id:'bot-'+randomBytes(7).toString('hex'),profile:profiles[randomInt(profiles.length)],name:'Kingdom '+(room.players.length+1),color:null,connected:true,bot:true,resources:{}});
+  refreshPreview(room);
   reply({ok:true});send(room);
+ });
+ socket.on('room:map',({mapId}={},reply=()=>{})=>{
+  const room=rooms.get(socket.data.code);
+  if(!room||room.host!==socket.data.id||room.game||!Object.hasOwn(MAPS,mapId))return reply({ok:false,error:'Map selection is unavailable.'});
+  room.mapId=mapId;refreshPreview(room);send(room);reply({ok:true});
  });
  socket.on('room:start',(_={},reply=()=>{})=>{
   const room=rooms.get(socket.data.code);
   if(!room||room.host!==socket.data.id)return reply({ok:false,error:'Only the host can start.'});
   if(room.game||room.players.length<2)return reply({ok:false,error:'Invite at least one other kingdom.'});
-  room.game=newRealm(room.players);
+  room.game=newRealm(room.players,room.mapId,room.preview);delete room.preview;
   reply({ok:true});advance(room);
  });
  socket.on('draft:pick',({kind,value}={},reply=()=>{})=>{

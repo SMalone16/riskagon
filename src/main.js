@@ -1,5 +1,5 @@
 import './style.css';
-import {PROFILES} from '../shared/profiles.js';
+import {MAPS,COLORS,BIOMES} from '../shared/maps.js';
 import {io} from 'socket.io-client';
 import {Board} from './board.js';
 import {NAVAL_COSTS,BOAT_CAPACITY,isWater,coastal} from '../server/naval.js';
@@ -10,11 +10,13 @@ sessionStorage.setItem('riskagon:id',id);
 const safe=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const $=s=>document.querySelector(s);
 const kinds={forest:'Forest',fields:'Wheat Fields',pasture:'Pasture',hills:'Clay Hills',mountains:'Iron Mountains',desert:'Desert',river:'River Crossing',lake:'Lake'};
+const terrainName=tile=>BIOMES[tile.biome]?.name||kinds[tile.terrain];
 const icons={wood:'🌲',brick:'🧱',wheat:'🌾',sheep:'🐑',ore:'⛏️'};
 const costs={...NAVAL_COSTS,road:{wood:1,brick:1},bridge:{wood:2,brick:1,ore:1},outpost:{wood:1,brick:1},settlement:{wood:2,brick:2,wheat:2,sheep:1},homes:{wood:2,brick:1,wheat:1},walls:{brick:2,ore:1},armory:{ore:2,brick:1},farm:{wood:2,wheat:1},lumberyard:{wood:1,brick:1},quarry:{wood:1,brick:2},mine:{wood:2,ore:1},ranch:{wood:1,sheep:2},barracks:{wood:2,brick:2,ore:1},stables:{wood:2,wheat:2,sheep:1}};
 const notes={shipyard:'Build boats on adjacent water',dock:'Allows naval troops to land here',cannons:'Return fire against naval bombardment',outpost:'+2 troops per turn; deployment point',settlement:'Upgrade outpost: 3 troops per turn',homes:'+1 native resource on matching roll',walls:'Defense bonus and stored charges',armory:'Stores attack bonuses on matching roll',farm:'+2 wheat on matching roll',lumberyard:'+2 wood on matching roll',quarry:'+2 brick on matching roll',mine:'+2 ore on matching roll',ranch:'+2 sheep on matching roll',barracks:'+3 troops per turn; adds 3 to tile production',stables:'Stores movement on matching roll',bridge:'Cross this river with armies'};
 const industry={forest:'lumberyard',fields:'farm',hills:'quarry',mountains:'mine',pasture:'ranch'};
 let code=new URLSearchParams(location.search).get('room')?.toUpperCase()||'';
+let lastPreview=null;
 let borderMode=null,originVertex=null,tradeOpen=false;
 let state=null,selected=null,roadMode=false,marchFrom=null,amount=1,buildOpen=false,hudOpen=false,lastFlow='',navalMode=null,lastTurnView='',lastEventSeq=0,allocationBusy=false;
 root.innerHTML=`
@@ -23,13 +25,15 @@ root.innerHTML=`
 <div id="turnBanner" class="turn-banner" aria-live="polite"></div>
 <div id="entry" class="panel entry"><h1>Shape your kingdom.</h1><p>Harvest the land. Build your roads. Claim the frontier.</p><label for="name">Commander name</label><input id="name" maxlength="24" value="Commander"/>
 <button class="primary" id="create">Create a realm</button><div class="join"><input id="codeInput" maxlength="6" aria-label="Room code" placeholder="ROOM CODE"/><button id="join">Join</button></div></div>
-<section id="lobby" class="panel entry" hidden></section>
+<button id="prevMap" class="map-arrow prev" data-action="prevMap" aria-label="Previous map" hidden>‹</button>
+<button id="nextMap" class="map-arrow next" data-action="nextMap" aria-label="Next map" hidden>›</button>
+
 
 <aside id="hud" class="panel hud" aria-label="Kingdom information" hidden><h2>Kingdoms</h2><div id="players"></div><h2>Treasury</h2><div id="resources"></div><details><summary>Chronicles & battles</summary><div id="log"></div></details><button data-action="copy">Copy invite link</button></aside>
 <div class="map-tools"><button data-action="home" title="Show my kingdom">⌂ My kingdom</button><button data-action="reset">View realm</button></div><div id="mapGuide" class="map-guide">Drag to orbit · Scroll to zoom</div>
-</div><div id="activity" class="activity" aria-live="polite"></div><section id="control" class="panel context" aria-label="Current turn controls" hidden></section></main><div id="toast" role="status"></div>
+</div><section id="lobby" class="panel entry" hidden></section><div id="activity" class="activity" aria-live="polite"></div><section id="control" class="panel context" aria-label="Current turn controls" hidden></section></main><div id="toast" role="status"></div>
 <dialog id="rules"><button class="close" data-action="help" aria-label="Close rules">×</button><h1>How to conquer.</h1>
-<p>Draft a unique banner, then choose a homeland in reverse order. Every kingdom starts with 3 soldiers and an outpost. Reach <b>32 victory points</b> to win.</p>
+<p>Draft a unique banner, then choose any homeland at least four hex steps from earlier picks, in reverse order. Water picks become islands. Every kingdom starts with 3 soldiers and an outpost. Reach <b>32 victory points</b> to win.</p>
 <p><b>1 · Roll.</b> Grab either large die on the hex board, hold, drag and release. Or press Roll dice. Mountains rebound dice; forests slow them; clay sticks; fields are neutral; water floats them. Everyone watches the same server-recorded throw. The upward faces determine production.</p>
 <p><b>2 · Reinforce.</b> From round two, earn 1 troop per pair of occupied tiles of the same resource, 2 per outpost or 3 per settlement, plus 3 per barracks. On your roll, matching owned tiles also contribute their troop output: a settlement with a barracks yields 6. All troops enter a pool; bonuses on other players’ rolls wait for your next placement phase. Click an outpost or settlement and use +/−, W/S or arrow keys to allocate troops. Escape returns to your discovered territory. Review the plan, then confirm it to begin orders. The opening round grants no reinforcements, including roll bonuses.</p>
 <p><b>3 · Orders.</b> Select an owned tile to march, attack or open its build recipes. Armies leave one soldier behind. Roads follow shared edges, halve movement cost and improve attacks. Bridges allow river crossings. Coastal shipyards launch boats carrying up to four existing soldiers each. Embark from a coastal outpost, sail through adjacent water, and land only through a dock. Build a landing dock on unclaimed shore from a neighboring crewed boat. Bombardment reduces an adjacent enemy garrison without return fire unless it has cannons. Sailing, landing and bombardment each cost one movement point. Buildings and troops reveal nearby territory; numbers appear within five hexes.</p>
@@ -78,7 +82,7 @@ const board=new Board($('#board'),tile=>{
  if(!originVertex){originVertex=edge.vertex;render();return;}
  act({type:borderMode==='road'?'road':borderMode==='gate'?'gate':'edgeWall',vertices:[originVertex,edge.vertex],material:borderMode,tile:selected});originVertex=null;render();
 });
-board.onHover=tile=>{$('#mapGuide').textContent=tile?`${kinds[tile.terrain]} · ${tile.numberHidden?'Number undiscovered':'Roll '+(tile.number??'—')} · ${tile.owner===id&&tile.moveReady?'Ready: '+(isWater(tile)?tile.moveReady.navy:tile.moveReady.army)+' troops · ':''}${tile.masked?'Unscouted':isWater(tile)?(tile.boats||0)+' boats · '+(tile.navy||0)+' naval troops':tile.army+' troops'}`:'WASD / arrows to pan · Scroll to zoom · Hover to inspect';};
+board.onHover=tile=>{$('#mapGuide').textContent=tile?`${terrainName(tile)} · ${tile.numberHidden?'Number undiscovered':'Roll '+(tile.number??'—')} · ${tile.owner===id&&tile.moveReady?'Ready: '+(isWater(tile)?tile.moveReady.navy:tile.moveReady.army)+' troops · ':''}${tile.masked?'Unscouted':isWater(tile)?(tile.boats||0)+' boats · '+(tile.navy||0)+' naval troops':tile.army+' troops'}`:'WASD / arrows to pan · Scroll to zoom · Hover to inspect';};
 board.update(preview(),{});
 const dice=new BoardDice(board,throwData=>new Promise((resolve,reject)=>{
  socket.timeout(15000).emit('game:action',{type:'roll',throw:throwData},(error,r)=>{if(error||!r?.ok){reject(Error(r?.error||'Roll interrupted. Try again.'));return;}resolve();});
@@ -86,7 +90,7 @@ const dice=new BoardDice(board,throwData=>new Promise((resolve,reject)=>{
 board.onFrame=now=>dice.update(now);
 function buildPanel(tile){
  const options=canBridge(tile)?['bridge']:!tile.building?['outpost']:[...(tile.building===1?['settlement']:[]),...(coastal(state.game,tile)?['shipyard','dock']:[]),'cannons','homes','armory',industry[tile.terrain],'barracks'].filter(Boolean);
- return `<div class="builder"><h2>Build · ${safe(kinds[tile.terrain])}</h2>${options.map(kind=>`<button class="recipe" data-build="${kind}" ${canOrder()&&canPay(kind)&&!tile.structures.includes(kind)&&(kind==='settlement'||kind==='outpost'||kind==='bridge'||tile.structures.filter(k=>k!=='settlement').length<5)?'':'disabled'}><b>${safe(kind)}</b><small>${notes[kind]}</small><span>${costLabel(kind)}${tile.structures.includes(kind)?' · Built':''}</span></button>`).join('')}</div>${btn('Back to orders','closeBuild')}`;
+ return `<div class="builder"><h2>Build · ${safe(terrainName(tile))}</h2>${options.map(kind=>`<button class="recipe" data-build="${kind}" ${canOrder()&&canPay(kind)&&!tile.structures.includes(kind)&&(kind==='settlement'||kind==='outpost'||kind==='bridge'||tile.structures.filter(k=>k!=='settlement').length<5)?'':'disabled'}><b>${safe(kind)}</b><small>${notes[kind]}</small><span>${costLabel(kind)}${tile.structures.includes(kind)?' · Built':''}</span></button>`).join('')}</div>${btn('Back to orders','closeBuild')}`;
 }
 function destinations(){
  const g=state?.game;if(!g)return [];
@@ -108,7 +112,15 @@ function changeAllocation(delta){
  allocationBusy=true;
  socket.timeout(10000).emit('game:action',{type:'allocate',tile:selected,count},(error,r)=>{allocationBusy=false;if(error||!r?.ok)toast(r?.error||'Allocation interrupted. Try again.',true);});
 }
+function cycleMap(direction){
+ if(!state||state.game||state.host!==id)return;
+ const maps=Object.keys(MAPS),index=maps.indexOf(state.mapId);
+ command('room:map',{mapId:maps[(index+direction+maps.length)%maps.length]});
+}
 window.addEventListener('keydown',e=>{
+ if(state&&!state.game&&state.host===id&&!e.target.closest?.('input,textarea,select,dialog')&&!document.querySelector('dialog[open]')&&['ArrowLeft','ArrowRight'].includes(e.key)){
+  e.preventDefault();e.stopImmediatePropagation();if(!e.repeat)cycleMap(e.key==='ArrowLeft'?-1:1);return;
+ }
  if(e.target.closest?.('input,textarea,select,dialog')||!state?.game)return;
  if(e.key==='Escape'){e.preventDefault();board.keys.clear();backToTerritory();return;}
  const tile=state.game.tiles.find(t=>t.id===selected);
@@ -123,14 +135,15 @@ function render(){
  $('#entry').hidden=!!state;$('#lobby').hidden=!state||!!g;$('#control').hidden=!g;$('#turnBanner').hidden=!g;
  $('#hud').hidden=!hudOpen;$('#hudToggle').setAttribute('aria-expanded',String(hudOpen));
  const current=state?.players[g?.turn],tile=g?.tiles.find(t=>t.id===selected),own=tile?.owner===id,reserve=g?.reinforcements?.[id]||0;
+ $('#prevMap').hidden=$('#nextMap').hidden=!state||!!g||state.host!==id;
  if(state&&!g){
-  $('#lobby').innerHTML=`<h2>Your private realm</h2><strong class="room-code">${safe(state.code)}</strong><p>Share this code or copy the invite link.</p>${btn('Copy invite link','copy')}<div class="lobby-players">${state.players.map(p=>`<p>${safe(p.name)} ${p.bot?'· AI':''} ${p.id===state.host?'· Host':''}</p>`).join('')}</div>${state.host===id?'<label>AI profile <select id="botProfile">'+Object.entries(PROFILES).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('')+'</select></label>'+btn('Add AI kingdom','bot',state.players.length<4)+btn('Begin draft','start',state.players.length>=2,'primary'):'<p>Waiting for the host.</p>'}`;
+  $('#lobby').innerHTML=`<h2>${safe(MAPS[state.mapId])}</h2><strong class="room-code">${safe(state.code)}</strong><p>${state.players.length}/8 kingdoms · Share the code or invite link.</p>${btn('Copy invite link','copy')}<div class="lobby-players">${state.players.map(p=>`<p>${safe(p.name)} ${p.bot?'· AI':''} ${p.id===state.host?'· Host':''}</p>`).join('')}</div>${state.host===id?btn('Add AI kingdom','bot',state.players.length<COLORS.length)+btn('Begin draft','start',state.players.length>=2,'primary'):'<p>Waiting for the host.</p>'}`;
  }
  let controls='',guide='WASD / arrows to pan · Scroll to zoom · Hover to inspect';
  if(phase==='draft'){
   const order=g.draftStage==='color'?g.draftOrder:[...g.draftOrder].reverse(),drafter=order[g.draftIndex],mine=drafter===id,name=state.players.find(p=>p.id===drafter)?.name;
   $('#turnBanner').innerHTML=`<b>${mine?'Your pick':safe(name)+' is drafting'}</b> · ${g.draftStage==='color'?'Choose a banner':'Choose your homeland'}`;
-  controls=g.draftStage==='color'?`<h2>Choose your kingdom</h2><div class="color-draft">${['blue','red','green','yellow'].map(c=>`<button data-color="${c}" ${mine&&!state.players.some(p=>p.color===c)?'':'disabled'}><i class="${c}"></i>${c}</button>`).join('')}</div>`:`<h2>${mine?'Choose a glowing starting hex':'Waiting for a homeland pick'}</h2><details><summary>Starting locations</summary><div class="draft-options">${g.spawnChoices.map(x=>`<button data-spawn="${x}" ${mine?'':'disabled'}>${x}</button>`).join('')}</div></details>`;
+  controls=g.draftStage==='color'?`<h2>Choose your kingdom</h2><div class="color-draft">${COLORS.map(c=>`<button data-color="${c}" ${mine&&!state.players.some(p=>p.color===c)?'':'disabled'}><i class="${c}"></i>${c}</button>`).join('')}</div>`:`<h2>${mine?'Choose a homeland at least 4 hexes from other starts':'Waiting for a homeland pick'}</h2><details><summary>Starting locations</summary><div class="draft-options">${g.spawnChoices.map(x=>`<button data-spawn="${x}" ${mine?'':'disabled'}>${x}</button>`).join('')}</div></details>`;
   guide='3 starting troops · No opening-round reinforcements';
  }else if(g){
   const active=isActive(),orders=canOrder(),rolling=stage==='rolling';
@@ -144,12 +157,12 @@ function render(){
    const legal=own&&tile.building&&!isWater(tile),allocated=g.allocations?.[id]?.[selected]||0;
    const income=g.income||{};
    controls=`<div class="deployment-head"><h2>${reserve} troops left to allocate</h2><small>Outposts ${income.outposts||0} · Settlements ${income.settlements||0} · Barracks ${income.barracks||0} · Resource pairs ${income.territory||0} · Rolled ${income.production||0}</small></div>
-   <div class="deployment-actions">${legal?`${btn('← Territory view','territory')}<b>${safe(kinds[tile.terrain])} ${tile.building>=2?'settlement':'outpost'}</b><div class="allocation-stepper">${btn('−','less',allocated>0)}<output aria-live="polite">${allocated} assigned</output>${btn('+','more',reserve>0)}</div><small>W / ↑ adds · S / ↓ removes · Esc returns</small>`:'<p>Choose a highlighted outpost or settlement. Allocations stay editable until you confirm.</p>'}${btn('Confirm placements & begin orders','confirmDeployment',reserve===0,'primary')}</div>`;
+   <div class="deployment-actions">${legal?`${btn('← Territory view','territory')}<b>${safe(terrainName(tile))} ${tile.building>=2?'settlement':'outpost'}</b><div class="allocation-stepper">${btn('−','less',allocated>0)}<output aria-live="polite">${allocated} assigned</output>${btn('+','more',reserve>0)}</div><small>W / ↑ adds · S / ↓ removes · Esc returns</small>`:'<p>Choose a highlighted outpost or settlement. Allocations stay editable until you confirm.</p>'}${btn('Confirm placements & begin orders','confirmDeployment',reserve===0,'primary')}</div>`;
    guide='Reinforcements first · Movement and building unlock afterwards';
   }else{
    controls=tile?'':`<div class="context-heading"><b>${active?'Issue orders':'Observing the realm'}</b>${g.lastRoll?`<span>⚄ ${g.lastRoll.dice.join(' + ')} = ${g.lastRoll.sum}</span>`:''}</div>`;
    if(tile){
-    controls+=`<div class="province"><b>${safe(kinds[tile.terrain])}</b>${btn('←','territory',true,'close-selection')}<small>${tile.numberHidden?'Number hidden':`Roll ${tile.number??'—'}`} · ${own&&tile.moveReady?'Ready: '+(isWater(tile)?tile.moveReady.navy:tile.moveReady.army)+' troops · ':''}${tile.masked?'Unscouted':isWater(tile)?(tile.boats||0)+' boats · '+(tile.navy||0)+' naval troops':tile.army+' soldiers'}${tile.owner?' · '+safe(state.players.find(p=>p.id===tile.owner)?.name):''}</small></div>`;
+    controls+=`<div class="province"><b>${safe(terrainName(tile))}</b>${btn('←','territory',true,'close-selection')}<small>${tile.numberHidden?'Number hidden':`Roll ${tile.number??'—'}`} · ${own&&tile.moveReady?'Ready: '+(isWater(tile)?tile.moveReady.navy:tile.moveReady.army)+' troops · ':''}${tile.masked?'Unscouted':isWater(tile)?(tile.boats||0)+' boats · '+(tile.navy||0)+' naval troops':tile.army+' soldiers'}${tile.owner?' · '+safe(state.players.find(p=>p.id===tile.owner)?.name):''}</small></div>`;
     if(buildOpen&&orders&&(!isWater(tile)||canBridge(tile))&&(own||canBridge(tile)))controls+=buildPanel(tile);
     else if(orders){
      amount=Math.min(Math.max(1,amount),Math.max(1,isWater(tile)?tile.navy:(tile.army||0)-1));
@@ -181,7 +194,10 @@ function render(){
  if(g?.trade?.to===id)controls+=`<p>Trade offer: receive ${g.trade.giveCount} ${safe(g.trade.give)} for ${g.trade.receiveCount} ${safe(g.trade.receive)}.</p>${btn('Accept trade','acceptTrade')}${btn('Reject trade','rejectTrade')}`;
  $('#treasury').innerHTML=Object.entries(icons).map(([r,icon])=>`<span>${icon} ${r} <b>${me()?.resources?.[r]||0}</b></span>`).join('');
  $('#control').innerHTML=controls;$('#mapGuide').textContent=guide;
- board.update(g?.tiles||preview(),{selected,borderMode,originVertex,borders:g?.borders||{},deploy:isActive()&&stage==='deploy',allocations:g?.allocations?.[id]||{},destinations:destinations(),roadMode:canOrder()&&roadMode,roads:g?.roads||{},players:state?.players||[],myId:id,spawnChoices:phase==='draft'&&g.draftStage==='spawn'?g.spawnChoices:[]});
+ board.update(g?.tiles||state?.preview||preview(),{selected,borderMode,originVertex,borders:g?.borders||{},deploy:isActive()&&stage==='deploy',allocations:g?.allocations?.[id]||{},destinations:destinations(),roadMode:canOrder()&&roadMode,roads:g?.roads||{},players:state?.players||[],myId:id,spawnChoices:phase==='draft'&&g.draftStage==='spawn'?g.spawnChoices:[]});
+ const previewKey=state&&!g?state.mapId+':'+state.preview.length:null;
+ if(previewKey&&previewKey!==lastPreview)requestAnimationFrame(()=>{board.resize();board.fitTiles(board.tiles);});
+ lastPreview=previewKey;
  const viewKey=phase==='playing'&&isActive()?g.round+':'+g.turn:'';
  if(viewKey&&viewKey!==lastTurnView){selected=null;requestAnimationFrame(()=>{board.resize();board.fitDiscovered();});lastTurnView=viewKey;toast('Your turn — command your kingdom.');}
  $('#turnBanner').classList.toggle('your-turn',isActive());
@@ -201,6 +217,7 @@ root.addEventListener('click',async e=>{
  if(el.dataset.spawn){command('draft:pick',{kind:'spawn',value:el.dataset.spawn});return;}
  if(el.dataset.build){act(el.dataset.build==='bridge'?{type:'bridge',tile:selected}:{type:'build',tile:selected,kind:el.dataset.build});return;}
  const action=el.dataset.action;
+ if(action==='prevMap'||action==='nextMap'){cycleMap(action==='prevMap'?-1:1);return;}
  if(action==='trade'){tradeOpen=!tradeOpen;render();return;}
  if(action==='acceptTrade'||action==='rejectTrade'){act({type:action});return;}
  if(action==='sendTrade'){
@@ -213,7 +230,7 @@ root.addEventListener('click',async e=>{
  if(action==='help'){const d=$('#rules');d.open?d.close():d.showModal();return;}
  if(action==='hud'){hudOpen=!hudOpen;render();return;}
  if(action==='copy'){try{await navigator.clipboard.writeText(location.href);toast('Invite link copied.');}catch{toast(location.href);}return;}
- if(action==='bot'||action==='start'){command('room:'+(action==='bot'?'addBot':'start'),action==='bot'?{profile:$('#botProfile').value}:{});return;}
+ if(action==='bot'||action==='start'){command('room:'+(action==='bot'?'addBot':'start'),{});return;}
  if(action==='physicalRoll'){dice.throw();return;}
  if(action==='reset'){board.reset();return;}
  if(action==='home'||action==='territory'){backToTerritory();return;}

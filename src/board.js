@@ -7,7 +7,7 @@ import {makeTroop} from './troops.js';
 import {clone as cloneSkinned} from 'three/addons/utils/SkeletonUtils.js';
 
 const SQRT3=Math.sqrt(3);
-const FACTIONS={blue:0x4b9eec,red:0xeb756b,green:0x65c5a2,yellow:0xf1c36d};
+import {BIOMES,FACTIONS} from '../shared/maps.js';
 const TERRAIN={
   forest:{top:0x4e9573,side:0x31715e},
   fields:{top:0xe9c56f,side:0xc49b53},
@@ -64,6 +64,28 @@ function decor(parent,terrain){
    const dune=mesh(new THREE.SphereGeometry(.4,9,5),makeMat(0xf1d6a5),parent,-.12,-.11,-.12);
    dune.scale.set(1,.37,.8);
    rock(parent,.31,.25,.43);
+ }
+}
+function coastalDecor(group,biome){
+ if(biome==='miami'){
+  box(group,0xf4c8b4,.42,.68,.36,0,.34,0);
+ }else if(biome==='keys'){
+  box(group,0x8f7150,.075,.57,.075,0,.28,0);
+  for(let i=0;i<6;i++){
+   const angle=i*Math.PI/3;
+   const leaf=cone(group,0x43976d,.13,.44,.14*Math.cos(angle),.54,.14*Math.sin(angle));
+   leaf.rotation.order='YXZ';leaf.rotation.y=-angle;leaf.rotation.z=-1.24;
+  }
+ }else if(biome==='beach'){
+  box(group,0xb1926b,.035,.41,.035,0,.21,0);
+  cone(group,0xe9a68c,.27,.14,0,.46,0,8);
+ }else if(biome==='glades'){
+  const pool=mesh(new THREE.CylinderGeometry(.38,.38,.025,8),makeMat(0x649e94),group);
+  pool.scale.z=.65;
+  for(let i=0;i<5;i++)cone(group,0x647e46,.046,.3+i%2*.12,(i-2)*.09,.16,.16,4);
+ }else if(biome==='pine'){pine(group,0,0,.95);rock(group,.29,.2,.55);}
+ else if(biome==='ocean'){
+  for(let i=0;i<3;i++)box(group,0xa6e4dd,.25,.02,.035,(i-1)*.23,.025,(i%2)*.18);
  }
 }
 function soldier(parent,color,x,z,scale=1){
@@ -156,7 +178,7 @@ export class Board{
   this.controls=new OrbitControls(this.camera,this.renderer.domElement);
   this.controls.enableDamping=true;this.controls.dampingFactor=.07;
   this.controls.enableRotate=true;this.controls.maxPolarAngle=Math.PI*.44;this.controls.minPolarAngle=Math.PI*.22;
-  this.controls.minZoom=.6;this.controls.maxZoom=8;this.controls.mouseButtons.RIGHT=THREE.MOUSE.PAN;
+  this.controls.minZoom=.15;this.controls.maxZoom=8;this.controls.mouseButtons.RIGHT=THREE.MOUSE.PAN;
   this.scene.add(new THREE.HemisphereLight(0xdaf1ff,0x4c5645,2.5));
   const sun=new THREE.DirectionalLight(0xffedd0,3.0);sun.position.set(-8,16,10);
   sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
@@ -232,7 +254,7 @@ export class Board{
   const points=tiles.flatMap(t=>{const p=pos(t);return [-1.3,1.3].flatMap(x=>[-1.3,1.3].flatMap(z=>[0,2].map(y=>new THREE.Vector3(p.x+x,y,p.z+z).applyMatrix4(this.camera.matrixWorldInverse))));});
   const width=Math.max(...points.map(p=>p.x))-Math.min(...points.map(p=>p.x));
   const height=Math.max(...points.map(p=>p.y))-Math.min(...points.map(p=>p.y));
-  this.camera.zoom=Math.min(8,Math.max(.6,Math.min((this.camera.right-this.camera.left)/(width+1),(this.camera.top-this.camera.bottom)/(height+1))));
+  this.camera.zoom=Math.min(8,Math.max(this.controls.minZoom,Math.min((this.camera.right-this.camera.left)/(width+1),(this.camera.top-this.camera.bottom)/(height+1))));
   this.camera.updateProjectionMatrix();this.controls.update();
  }
  playEvent(event,players){
@@ -246,20 +268,20 @@ export class Board{
   const start=pos(from||to),end=pos(to||from);start.y=.25;end.y=.25;
   this.scene.add(effect);this.effects.push({mesh:effect,start,end,began:performance.now(),moving});
  }
- async prefab(relative){
-  if(!this.kaykit)return null;
-  if(!this.models.has(relative)){
-   this.models.set(relative,new Promise(resolve=>{
-    this.loader.load('/assets/kaykit/'+relative+'.gltf',g=>resolve(g.scene),undefined,()=>resolve(null));
+ async prefab(url){
+  if(!this.models.has(url)){
+   this.models.set(url,new Promise(resolve=>{
+    this.loader.load(url,g=>resolve(g.scene),undefined,()=>resolve(null));
    }));
   }
-  const item=await this.models.get(relative);
+  const item=await this.models.get(url);
   return item?.clone(true)||null;
  }
  decorateWithPrefab(holder,relative,scale=1){
-  if(!this.kaykit)return;
+  const bundled=relative.startsWith('/assets/biscayne/');
+  if(!bundled&&!this.kaykit)return;
 
-  this.prefab(relative).then(model=>{
+  this.prefab(bundled?relative:'/assets/kaykit/'+relative+'.gltf').then(model=>{
    if(!model||!belongsTo(holder,this.board))return;
    model.traverse(o=>o.userData.prefab=true);disposeGroup(holder);this.dirty=true;model.scale.setScalar(scale);holder.add(model);
   });
@@ -312,7 +334,7 @@ export class Board{
    if(previous?.signature===signature){this.pickables.push(previous.base);continue;}
    if(previous){previous.root.removeFromParent();disposeGroup(previous.root);}
    const root=new THREE.Group();root.position.copy(pos(tile));this.board.add(root);
-   const colors=TERRAIN[tile.terrain]||TERRAIN.desert;
+   const colors=BIOMES[tile.biome]||TERRAIN[tile.terrain]||TERRAIN.desert;
    const base=mesh(new THREE.CylinderGeometry(1,1,.32,6),[
       makeMat(colors.side),makeMat(colors.top),makeMat(colors.side)
    ],root,0,0,0);
@@ -326,7 +348,13 @@ export class Board{
     top.add(line);
    }
    const nature=new THREE.Group();nature.position.set(tile.condensed?-.38:0,0,tile.condensed?-.32:-.08);nature.scale.setScalar(tile.condensed?.34:1.2);top.add(nature);
-   decor(nature,tile.terrain);
+   if(tile.biome){
+    coastalDecor(nature,tile.biome);
+    if(tile.biome==='miami'){
+     const model=(tile.q+tile.r)%2?'building_A_withoutBase':'building_F_withoutBase';
+     this.decorateWithPrefab(nature,'/assets/biscayne/'+model+'.gltf',.42);
+    }
+   }else decor(nature,tile.terrain);
    if(tile.terrain==='river'&&tile.bridge){
     const bridge=new THREE.Group();top.add(bridge);
     box(bridge,0x876343,1.5,.12,.56,0,.16,0);
@@ -337,7 +365,7 @@ export class Board{
     const color=FACTIONS[(options.players||[]).find(p=>p.id===tile.bridge)?.color]||0xe7cfa2;
     box(bridge,color,.12,.28,.12,0,.38,0);
    }
-   if(this.kaykit){
+   if(this.kaykit&&!tile.biome){
     const asset={forest:'decoration/nature/trees_A_small',mountains:'decoration/nature/mountain_A_grass',hills:'decoration/nature/hills_A'}[tile.terrain];
     if(asset)this.decorateWithPrefab(nature,asset,tile.terrain==='mountains'?.85:1.08);
    }
@@ -355,7 +383,7 @@ export class Board{
     if(tile.building){
      const holder=proceduralBuilding(top,color,tile.building);
      const rel='buildings/'+(player?.color||'blue')+'/building_'+(tile.building===2?'castle':'home_A')+'_'+(player?.color||'blue');
-     this.decorateWithPrefab(holder,rel,tile.building===2?.66:.89);
+     if(['blue','red','green','yellow'].includes(player?.color))this.decorateWithPrefab(holder,rel,tile.building===2?.66:.89);
     }
     if(tile.structures?.length>0){
       const addOn=new THREE.Group();top.add(addOn);
@@ -474,7 +502,7 @@ export class Board{
    const x=Number(this.keys.has('d')||this.keys.has('ArrowRight'))-Number(this.keys.has('a')||this.keys.has('ArrowLeft'));
    const z=Number(this.keys.has('w')||this.keys.has('ArrowUp'))-Number(this.keys.has('s')||this.keys.has('ArrowDown'));
    const delta=forward.multiplyScalar(z).addScaledVector(right,x).multiplyScalar(dt*10/this.camera.zoom);
-   const target=this.controls.target.clone().add(delta);target.x=THREE.MathUtils.clamp(target.x,-12,12);target.z=THREE.MathUtils.clamp(target.z,-12,12);
+   const target=this.controls.target.clone().add(delta);target.x=THREE.MathUtils.clamp(target.x,-20,20);target.z=THREE.MathUtils.clamp(target.z,-20,20);
    delta.copy(target).sub(this.controls.target);this.camera.position.add(delta);this.controls.target.copy(target);this.controls.update();
   }
   for(const effect of this.effects){
