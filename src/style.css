@@ -638,3 +638,25 @@ dialog .primary{
 #turnClock{margin-left:8px;font-variant-numeric:tabular-nums;color:#ffdf9e}
 .harvest-particle{position:fixed;pointer-events:none;z-index:20;font-size:21px}
 @media(max-width:620px){#control.context{right:4px;top:82px;width:40%;padding:9px;max-height:calc(100% - 114px)}#control h2{font-size:17px}}
+
+.biscayne{--night:#131530;--sunset:linear-gradient(110deg,#4C5FCA,#813DBB 24%,#CC46A0 48%,#F76685 67%,#FF885F 84%,#FFA948)}
+.biscayne header,.biscayne .treasury{background:#191830;color:#ffe9d9}
+.biscayne header{border-bottom:3px solid;border-image:var(--sunset) 1}
+.biscayne #control,.biscayne .turn-banner,.biscayne #hud,.biscayne #lobby{background:linear-gradient(145deg,#202144ed,#30213ee6);border-color:#af9aca80;color:#fff4f0}
+.biscayne #control h2,.biscayne #lobby h2{color:#ffc6ae}
+.biscayne #control .primary{background:linear-gradient(110deg,#ff885f,#ffa948);color:#21142e}
+.business-panel{padding-bottom:10px;border-bottom:1px solid #bb92ce77}
+.business-panel button{margin:3px;padding:6px 10px;background:#40335b}
+.biscayne .allocation-stepper,#control .pursuit{border-left:4px solid var(--crew);padding-left:9px}
+.pursuit input{width:55px}.pursuit label{display:inline-block;padding:4px}
+#crewPhone{position:fixed;z-index:12;right:12px;bottom:10px;width:min(295px,84vw);height:min(510px,74dvh);padding:9px;border-radius:34px;border:4px solid #171628;box-shadow:0 12px 45px #1119;background:linear-gradient(155deg,#4c5fca,#813dbb,#cc46a0,#f76685,#ff885f,#ffa948);display:flex;flex-direction:column}
+#crewPhone[hidden]{display:none}
+#crewPhone:before{content:'';display:block;width:64px;height:10px;border-radius:8px;background:#151523;margin:0 auto 6px}
+#crewPhone header{border:0;border-radius:17px 17px 0 0;padding:8px 13px;font-weight:700;display:flex;justify-content:space-between}
+.wire-feed{background:#19172d;overflow:auto;overscroll-behavior:contain;border-radius:0 0 22px 22px;flex:1;padding:9px}
+.wire-feed article{border-radius:12px;overflow:hidden;background:#2d2843;margin-bottom:10px}.wire-feed img{width:100%;height:auto;display:block}.wire-feed p{padding:9px;color:#f5e9df;font-size:13px}.wire-feed strong{color:#ffa948}
+.biscayne [data-color]{border-left:6px solid var(--banner)}
+.biscayne .business-panel button small{display:block;font-size:10px;font-weight:400;color:#e2d3e9}
+.biscayne .deployment-head{border-top:3px solid var(--crew)}
+.biscayne .color-draft button{display:grid;grid-template-columns:12px 1fr;align-items:center;column-gap:7px;text-align:left}
+.biscayne .color-draft small{grid-column:2;color:#d8cadc;font-size:10px}

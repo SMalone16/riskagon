@@ -1,3 +1,4 @@
+import {businessBot} from './enterprise.js';
 import {ready} from './movement.js';
 import {adjacentKingdoms} from './frontier.js';
 import {COSTS,RESOURCE_STRUCTURE,adjacent,dist} from './realm.js';
@@ -12,6 +13,7 @@ export function chooseBotAction(room,context={}){
   if(!homes.length)return null;
   return {type:'deploy',tile:homes[0].id,count:Math.min(g.reinforcements[p.id],Math.max(1,Math.ceil(g.reinforcements[p.id]/2)))};
  }
+ if(g.mapId==='florida')return businessBot(room,context.steps||0);
  const profile=p.profile||'steady',aggressive=['aggro','navalAggro'].includes(profile),naval=['navy','navalAggro'].includes(profile),retaliate=g.provoked?.[p.id];
  if((context.steps||0)>12)return {type:'end'};
  if(profile==='explorer'&&!context.traded){const target=room.players.find(o=>o.id!==p.id&&adjacentKingdoms(g,p.id,o.id));const give=Object.keys(p.resources).find(r=>p.resources[r]>2);if(target&&give){context.traded=true;return {type:'offerTrade',player:target.id,give,receive:give==='wood'?'ore':'wood',giveCount:1,receiveCount:1};}}

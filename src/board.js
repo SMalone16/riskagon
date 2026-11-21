@@ -1,3 +1,5 @@
+import {cityProp} from './cityArt.js';
+import {CREWS} from '../shared/enterprise.js';
 import {vertexPosition} from '../shared/edges.js';
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
@@ -196,6 +198,11 @@ export class Board{
   this.loader=new GLTFLoader();this.models=new Map();this.characterModels=new Map();this.kaykit=false;
   this.tiles=[];this.options={};this.hover=null;this.pointerDown=null;this.keys=new Set();this.effects=[];
   this.hoverOutline=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(Array.from({length:6},(_,i)=>new THREE.Vector3(Math.sin(i*Math.PI/3)*1.025,0,Math.cos(i*Math.PI/3)*1.025))),new THREE.LineBasicMaterial({color:0xfff2b5,depthTest:false}));
+  this.hoverBeam=new THREE.Mesh(new THREE.CylinderGeometry(1.025,1.025,.82,6,1,true),new THREE.ShaderMaterial({
+   uniforms:{tint:{value:new THREE.Color()}},transparent:true,side:THREE.DoubleSide,depthWrite:false,
+   vertexShader:'varying float h;void main(){h=uv.y;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
+   fragmentShader:'uniform vec3 tint;varying float h;void main(){gl_FragColor=vec4(tint,(1.-h)*.6);}'
+  }));this.hoverBeam.visible=false;this.scene.add(this.hoverBeam);
   this.hoverOutline.visible=false;this.hoverOutline.renderOrder=20;this.scene.add(this.hoverOutline);
   this.keyDown=e=>{
    const key=e.key.length===1?e.key.toLowerCase():e.key;
@@ -243,6 +250,10 @@ export class Board{
  refreshHover(){
   this.dirty=true;
   const tile=this.tiles.find(t=>t.id===this.hover);this.hoverOutline.visible=!!tile;
+  const crew=CREWS[this.options.players?.find(p=>p.id===this.options.myId)?.color];
+  this.hoverBeam.visible=!!tile&&this.options.city;
+  if(this.hoverBeam.visible){this.hoverBeam.position.copy(pos(tile));this.hoverBeam.position.y=.58;this.hoverBeam.material.uniforms.tint.value.setHex(crew?.color??0xffbb8a);}
+  this.hoverOutline.material.color.setHex(this.options.city&&crew?crew.color:0xfff2b5);
   if(tile){this.hoverOutline.position.copy(pos(tile));this.hoverOutline.position.y=.2;}
  }
  fitDiscovered(){this.fitTiles(this.tiles.filter(t=>t.discovered||t.visible||t.owner===this.options.myId));}
@@ -260,7 +271,7 @@ export class Board{
  playEvent(event,players){
   if(!event.from&&!event.to)return;
   const from=this.tiles.find(t=>t.id===event.from),to=this.tiles.find(t=>t.id===event.to);
-  const color=FACTIONS[players.find(p=>p.id===event.actor)?.color]||0xe8d5a4;
+  const color=this.palette[players.find(p=>p.id===event.actor)?.color]||0xe8d5a4;
   const moving=['march','sail','land','embark'].includes(event.type);
   let effect;
   if(moving){effect=event.type==='sail'?boat(color):makeTroop(color,'infantry',1);}
@@ -319,6 +330,7 @@ export class Board{
  }
  update(tiles=[],options={}){
   this.tiles=tiles;this.options=options;
+  this.palette=options.city?Object.fromEntries(Object.entries(CREWS).map(([id,c])=>[id,c.color])):FACTIONS;
   this.pickables=[];
   const remaining=new Set(this.tileMeshes.keys());
   const colorsByPlayer=new Map((options.players||[]).map(player=>[player.id,player.color]));
@@ -327,13 +339,14 @@ export class Board{
   if(this.hover)this.onHover?.(tiles.find(t=>t.id===this.hover));
   for(const tile of tiles){
    remaining.delete(tile.id);
-   const signature=JSON.stringify([tile,this.kaykit,colorsByPlayer.get(tile.owner),colorsByPlayer.get(tile.bridge),
+   const signature=JSON.stringify([tile,options.city,options.patrol===tile.id,options.policeTarget===tile.id,this.kaykit,colorsByPlayer.get(tile.owner),colorsByPlayer.get(tile.bridge),
     selected===tile.id,options.destinations?.includes(tile.id),Boolean(options.deploy),options.myId,
     options.allocations?.[tile.id],options.spawnChoices?.includes(tile.id)]);
    const previous=this.tileMeshes.get(tile.id);
    if(previous?.signature===signature){this.pickables.push(previous.base);continue;}
    if(previous){previous.root.removeFromParent();disposeGroup(previous.root);}
    const root=new THREE.Group();root.position.copy(pos(tile));this.board.add(root);
+   if(options.patrol===tile.id){const car=cityProp('police');car.position.y=.95;root.add(car);}
    const colors=BIOMES[tile.biome]||TERRAIN[tile.terrain]||TERRAIN.desert;
    const base=mesh(new THREE.CylinderGeometry(1,1,.32,6),[
       makeMat(colors.side),makeMat(colors.top),makeMat(colors.side)
@@ -341,10 +354,10 @@ export class Board{
    this.tileMeshes.set(tile.id,{signature,root,base});
    base.userData.tile=tile.id;this.pickables.push(base);
    const top=new THREE.Group();top.position.y=.17;root.add(top);
-   if(selected===tile.id||options.destinations?.includes(tile.id)||options.deploy&&tile.owner===options.myId&&tile.building){
+   if(options.policeTarget===tile.id||selected===tile.id||options.destinations?.includes(tile.id)||options.deploy&&tile.owner===options.myId&&tile.building){
     const points=[];
     for(let i=0;i<6;i++){const theta=i*Math.PI/3;points.push(new THREE.Vector3(Math.sin(theta)*1.013,.04,Math.cos(theta)*1.013));}
-    const line=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:selected===tile.id?0xffecac:0x7af5c9}));
+    const line=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:options.policeTarget===tile.id?0xff3e4f:options.city&&tile.owner?this.palette[colorsByPlayer.get(tile.owner)]:selected===tile.id?0xffecac:0x7af5c9}));
     top.add(line);
    }
    const nature=new THREE.Group();nature.position.set(tile.condensed?-.38:0,0,tile.condensed?-.32:-.08);nature.scale.setScalar(tile.condensed?.34:1.2);top.add(nature);
@@ -362,7 +375,7 @@ export class Board{
       for(let j=-3;j<=3;j++)box(bridge,0xc3a374,.17,.10,.12,j*.20,.25,z);
       box(bridge,0x553f32,1.36,.07,.07,0,.38,z);
     }
-    const color=FACTIONS[(options.players||[]).find(p=>p.id===tile.bridge)?.color]||0xe7cfa2;
+    const color=this.palette[(options.players||[]).find(p=>p.id===tile.bridge)?.color]||0xe7cfa2;
     box(bridge,color,.12,.28,.12,0,.38,0);
    }
    if(this.kaykit&&!tile.biome){
@@ -376,14 +389,15 @@ export class Board{
    if(tile.tavern){const tavern=proceduralBuilding(top,0xc8944e,1);tavern.position.x=-.25;const sign=textSprite('T','#fff','#745132',.5);sign.position.set(0,1.2,0);top.add(sign);}
    if(tile.owner){
     const player=(options.players||[]).find(p=>p.id===tile.owner);
-    const color=FACTIONS[player?.color]||FACTIONS.blue;
+    const color=this.palette[player?.color]||FACTIONS.blue;
     const flagpost=box(top,0x6f5742,.036,.72,.035,.63,.37,-.48);
     const flag=box(top,color,.26,.16,.02,.77,.67,-.48);
     flag.castShadow=false;
     if(tile.building){
-     const holder=proceduralBuilding(top,color,tile.building);
+     const holder=options.city?cityProp('outpost',player?.color):proceduralBuilding(top,color,tile.building);
+     if(options.city)top.add(holder);
      const rel='buildings/'+(player?.color||'blue')+'/building_'+(tile.building===2?'castle':'home_A')+'_'+(player?.color||'blue');
-     if(['blue','red','green','yellow'].includes(player?.color))this.decorateWithPrefab(holder,rel,tile.building===2?.66:.89);
+     if(!options.city&&['blue','red','green','yellow'].includes(player?.color))this.decorateWithPrefab(holder,rel,tile.building===2?.66:.89);
     }
     if(tile.structures?.length>0){
       const addOn=new THREE.Group();top.add(addOn);
@@ -392,7 +406,8 @@ export class Board{
        const angle=(n++)*Math.PI*.57+.7;
        const x=.52*Math.cos(angle),z=.52*Math.sin(angle);
        const structure=new THREE.Group();structure.position.set(x,0,z);structure.scale.setScalar(.47);addOn.add(structure);
-       if(['shipyard','dock','cannons'].includes(kind)){navalBuilding(structure,kind,color);}
+       if(options.city){structure.add(cityProp(kind,player?.color));}
+       else if(['shipyard','dock','cannons'].includes(kind)){navalBuilding(structure,kind,color);}
        else if(kind==='walls'){for(let j=-1;j<=1;j++)box(structure,0xa7aca7,.32,.25,.18,j*.36,.13,0);}
        else if(kind==='farm'||kind==='lumberyard'||kind==='quarry'||kind==='mine'||kind==='ranch'){
         box(structure,0xe8d8ae,.53,.28,.40,0,.15,0);
@@ -407,8 +422,8 @@ export class Board{
     const army=new THREE.Group();army.position.set(tile.building?.25:0,0,tile.building?.12:0);top.add(army);
     const addSoldier=(name,kind,x,z,height)=>{
      const holder=new THREE.Group();holder.position.set(x,0,z);army.add(holder);
-     holder.add(makeTroop(color,kind,height/.95));
-     if(kind!=='cavalry')this.attachCharacter(holder,name,color,height);
+     holder.add(options.city?cityProp('member',player?.color):makeTroop(color,kind,height/.95));
+     if(!options.city&&kind!=='cavalry')this.attachCharacter(holder,name,color,height);
     };
     if(tile.army>0)addSoldier('Knight','infantry',-.20,-.15,.64);
     if(tile.army>2)addSoldier('Rogue','archer',.16,-.21,.55);
@@ -419,7 +434,7 @@ export class Board{
    const own=tile.owner===options.myId;
    const ownerBorder=tile.owner?new THREE.Mesh(
     new THREE.TorusGeometry(.79,own?.056:.026,5,6),
-    makeMat(own?0xffe7a2:(FACTIONS[(options.players||[]).find(p=>p.id===tile.owner)?.color]||0xffffff))
+    makeMat(own&&!options.city?0xffe7a2:(this.palette[(options.players||[]).find(p=>p.id===tile.owner)?.color]||0xffffff))
    ):null;
    if(ownerBorder){ownerBorder.rotation.x=-Math.PI/2;ownerBorder.rotation.z=Math.PI/6;ownerBorder.scale.set(1.0,1.0,1.0);ownerBorder.position.y=.012;top.add(ownerBorder);}
    if(options.spawnChoices?.includes(tile.id)){
@@ -472,7 +487,7 @@ export class Board{
     const owner=options.roads?.[edge];
     const eligible=roadMode&&!owner&&(tile.owner===options.myId||other.owner===options.myId)&&!['lake','river'].includes(tile.terrain)&&!['lake','river'].includes(other.terrain);
     if(!owner&&!eligible)continue;
-    const color=owner?(FACTIONS[(options.players||[]).find(p=>p.id===owner)?.color]||0xb38a5e):0xffe09b;
+    const color=owner?(this.palette[(options.players||[]).find(p=>p.id===owner)?.color]||0xb38a5e):0xffe09b;
     const road=mesh(new THREE.BoxGeometry(1.13,.10,owner?.21:.13),makeMat(color),this.overlays,mid.x,.29,mid.z);
     road.quaternion.setFromUnitVectors(new THREE.Vector3(1,0,0),direction);
     if(owner){

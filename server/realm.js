@@ -1,3 +1,5 @@
+import {initializeBusiness,businessOrders,businessAction,dispatch,policeDecision,earnings,post} from './enterprise.js';
+import {CREWS,bonus} from '../shared/enterprise.js';
 
 import {availableOrders} from './orders.js';
 import {frontierAction,answerTrade,tavernRate,wallOn} from './frontier.js';
@@ -89,6 +91,7 @@ export function generateMap(mapId='frontier',radius=RADIUS){
  const candidates=cells.filter(t=>RESOURCE_TERRAIN[t.terrain]);
  candidates.forEach((t,i)=>{t.number=numberBag[i%numberBag.length];});
  for(const t of shuffle(cells.filter(t=>RESOURCE_TERRAIN[t.terrain])).slice(0,4))t.tavern=true;
+ if(mapId==='florida')for(const t of cells){delete t.tavern;if(t.biome==='ocean')t.number=numberBag[randomInt(numberBag.length)];}
  return cells;
 }
 export function newRealm(players,mapId='frontier',tiles=generateMap(mapId,mapRadius(players.length))){
@@ -107,7 +110,7 @@ export function chooseDraft(room,id,kind,value){
  const p=room.players.find(x=>x.id===id);
  if(g.draftStage==='color'){
   if(kind!=='color'||!COLORS.includes(value)||room.players.some(x=>x.color===value))throw Error('Pick an available banner color.');
-  p.color=value;g.log.unshift(p.name+' drafted the '+value+' banner.');
+  p.color=value;if(g.mapId==='florida')post(g,p,'draft','Joined the city as '+CREWS[value].name+'.',null,'member');g.log.unshift(p.name+' drafted the '+value+' banner.');
  }else{
   if(kind!=='spawn'||!g.spawnChoices.includes(value))throw Error('Pick one of the glowing spawn hexes.');
   const tile=tileAt(g,value);
@@ -125,6 +128,7 @@ export function chooseDraft(room,id,kind,value){
    if(water){tile.structures.push('dock');water.owner=id;water.boats=1;}
    p.resources.wood=2; // One landing dock for the first crossing.
   }
+  if(g.mapId==='florida'){initializeBusiness(p);post(g,p,'base','Opened our '+CREWS[p.color].base+' in '+BIOMES[tile.biome].name+'.',tile,'outpost');}
   g.spawnChoices=g.tiles.filter(t=>!t.owner&&room.players.every(player=>!player.home||dist(t,tileAt(g,player.home))>3)).map(t=>t.id);
   g.log.unshift(p.name+' claimed a starting outpost.');
  }
@@ -143,7 +147,7 @@ export function chooseDraft(room,id,kind,value){
 export function points(g,id){
  return g.tiles.filter(t=>t.owner===id).reduce((n,t)=>n+1+(t.building?1:0)+t.structures.filter(x=>!['outpost'].includes(x)).length,0);
 }
-function diceBattle(aCount,dCount,bonusA=0,bonusD=0){
+function diceBattle(aCount,dCount,bonusA=0,bonusD=0,gearA=0,gearD=0){
  let a=aCount,d=dCount;const rounds=[];
  for(let turns=0;a>0&&d>0&&turns<100;turns++){
   const attackerCount=Math.min(3,a),defenderCount=Math.min(2,d);
@@ -152,6 +156,8 @@ function diceBattle(aCount,dCount,bonusA=0,bonusD=0){
   const ds=rolled.slice(attackerCount).sort((x,y)=>y-x);
   if(bonusA)as[0]=Math.min(6,as[0]+bonusA);
   if(bonusD)ds[0]=Math.min(6,ds[0]+bonusD);
+  for(let i=0;i<as.length;i++)as[i]+=gearA;
+  for(let i=0;i<ds.length;i++)ds[i]+=gearD;
   let lostA=0,lostD=0;
   for(let i=0;i<Math.min(as.length,ds.length);i++)if(as[i]>ds[i]){d--;lostD++;}else{a--;lostA++;}
   rounds.push({attack:as,defense:ds,lostA,lostD});
@@ -181,12 +187,13 @@ export function finishRoll(room,now=Date.now()){
  g.harvest={id:g.lastRoll.id,tiles:[]};
  for(const tile of g.tiles){
   if(tile.number!==sum)continue;
-  const payout={tile:tile.id,resource:RESOURCE_TERRAIN[tile.terrain]};
+  const payout={tile:tile.id,resource:RESOURCE_TERRAIN[tile.terrain]||(g.mapId==='florida'?'wheat':null)};
   if(!payout.resource)continue;
   g.harvest.tiles.push(payout);
-  const owner=room.players.find(x=>x.id===tile.owner),resource=RESOURCE_TERRAIN[tile.terrain];
+  const owner=room.players.find(x=>x.id===tile.owner),resource=payout.resource;
   if(resource&&owner){
    const count=1+(tile.structures.includes('homes')?1:0)+(tile.structures.includes(RESOURCE_STRUCTURE[tile.terrain])?2:0);
+   if(g.mapId==='florida')earnings(owner,tile);
    payout.owner=owner.id;payout.count=count;
    owner.resources[resource]=(owner.resources[resource]||0)+count;
   }
@@ -204,6 +211,7 @@ export function finishRoll(room,now=Date.now()){
  g.reinforcements[p.id]=canDeploy?g.income.total:0;
  g.allocations[p.id]={};
  g.turnStage=g.reinforcements[p.id]>0?'deploy':'orders';
+ if(g.mapId==='florida'&&sum===7)dispatch(room);
  g.log.unshift(p.name+' rolled '+g.lastRoll.dice.join(' + ')+' = '+sum+'. '+g.reinforcements[p.id]+' troops to place.');
  g.log=g.log.slice(0,20);
  return true;
@@ -234,9 +242,10 @@ function performAction(room,id,action){
   if(!g.rolled)throw Error('Roll your physical dice before taking actions.');
   if(g.turnStage==='rolling')throw Error('Wait for the dice to settle.');
   if(!['deploy','allocate','confirmDeployment'].includes(t)&&g.turnStage!=='orders')throw Error('Place all reinforcements before movement, combat or building.');
-  if(frontierAction(room,id,action)){
+  if(g.mapId==='florida'&&t==='enterprise')businessAction(room,p,action);
+  else if(frontierAction(room,id,action)){
    g.log.unshift(p.name+' developed the frontier.');
-  }else if(performNaval(g,p,action,{pay,battle:diceBattle})){
+  }else if(performNaval(g,p,action,{pay,battle:(a,d)=>diceBattle(a,d,0,0,bonus(p),bonus(room.players.find(x=>x.id===tileAt(g,action.to)?.owner)))})){
    if(g.lastBattle?.defender){const defender=room.players.find(x=>x.id===g.lastBattle.defender);if(defender)g.lastBattle.defender=defender.name;}
    g.log.unshift(p.name+' issued naval orders.');
   }else if(t==='bridge'){
@@ -298,7 +307,7 @@ function performAction(room,id,action){
    const border=wallOn(g,from,to);
    if(border?.wall&&border.wall.owner!==id&&!(border.gate?.owner===id)){border.wall.hp-=Math.min(3,count);if(border.wall.hp<=0)delete border.wall;return;}
    if(border?.wall&&border.wall.owner===id&&!border.gate)throw Error('Build a gate to cross your wall.');
-   const battle=to.owner&&to.owner!==id?diceBattle(count,to.army,(road?1:0)+(from.attackStock>0?1:0),(to.structures.includes('walls')?1:0)+(to.ward>0?1:0)):null;
+   const battle=to.owner&&to.owner!==id?diceBattle(count,to.army,(road?1:0)+(from.attackStock>0?1:0),(to.structures.includes('walls')?1:0)+(to.ward>0?1:0),bonus(p),bonus(room.players.find(x=>x.id===to.owner))):null;
    g.mobilityUsed+=mobilityCost;g.lastBattle=null;
    if(to.owner===id){from.army-=count;to.army+=count;g.log.unshift(p.name+' moved '+count+' soldiers.');}
    else if(!to.owner){
@@ -320,7 +329,7 @@ function performAction(room,id,action){
     }
    }
   }else throw Error('Unknown action.');
-  if(points(g,id)>=TARGET_POINTS){
+  if(g.mapId!=='florida'&&points(g,id)>=TARGET_POINTS){
    g.phase='finished';g.winner=id;g.log.unshift(p.name+' united the frontier!');
   }
  }
@@ -339,6 +348,8 @@ function publicEvent(event,id){
 }
 export function perform(room,id,action){
  const g=room.game;
+ if(g?.pursuit){policeDecision(room,id,action,diceBattle);return;}
+ if(g?.mapId==='florida'&&!['roll','end','allocate','deploy','confirmDeployment','enterprise','road','march','embark','sail','land','bombard'].includes(action?.type))throw Error('Use the enterprise menu for this order.');
  if(['acceptTrade','rejectTrade'].includes(action?.type)){answerTrade(room,id,action);g.events.push({seq:++g.eventSeq,at:Date.now(),actor:id,type:action.type,summary:room.players.find(p=>p.id===id).name+(action.type==='acceptTrade'?' accepted a trade.':' declined a trade.'),audience:{}});g.events=g.events.slice(-50);return;}
  if(g?.phase!=='playing'||room.players[g.turn]?.id!==id)throw Error('Not your turn.');
  if(action?.type==='road'&&action.edge?.includes('|')){const [a,b]=action.edge.split('|').map(k=>g.tiles.find(t=>t.id===k));if(a&&b)action={...action,edge:borderBetween(a,b)};}
@@ -347,8 +358,16 @@ export function perform(room,id,action){
  const moved=prepareMovement(g,{...action,road:from&&to&&(g.borders?.[borderBetween(from,to)]?.road===id||g.roads[edgeId(from.id,to.id)]===id)});
  const before=g?Object.fromEntries(room.players.map(p=>[p.id,[...visibility(g,p.id).visible]])):{};
  performAction(room,id,action);moved();
+ if(g.mapId==='florida'&&previousOwner&&to?.owner===id&&previousOwner!==id&&to.till){
+  const lost=room.players.find(p=>p.id===previousOwner),won=room.players[g.turn];
+  const cash=Math.min(lost.cash,to.till);lost.cash-=cash;won.cash+=cash;to.till=cash;
+ }
  if(['bombard','march','land'].includes(action.type)&&previousOwner&&previousOwner!==id)g.provoked[previousOwner]=id;
  discover(room);
+ if(g.mapId==='florida'&&action.type!=='enterprise'){
+  const player=room.players.find(x=>x.id===id);
+  post(g,player,action.type,actionLabels[action.type]||'Updated crew orders.',to||from||tileAt(g,action.tile)||tileAt(g,player.home),action.type);
+ }
  if(action.type==='allocate')return; // Draft allocations stay private until the player confirms.
  const actor=room.players.find(p=>p.id===id);
  const audience=Object.fromEntries(room.players.map(p=>[p.id,[...new Set([...(before[p.id]||[]),...visibility(g,p.id).visible])]]));
@@ -367,16 +386,21 @@ export function visibility(g,id){
   if(owned.some(source=>dist(source,t)<=1)||owned.some(source=>source.structures.length>1&&dist(source,t)<=2)||ownedRoads.some(source=>dist(source,t)<=2))visible.add(t.id);
   if(owned.some(source=>dist(source,t)<=5))numbers.add(t.id);
  }
+ if(g.pursuit){
+  const pos=tileAt(g,g.pursuit.position),target=tileAt(g,g.pursuit.against);
+  visible.add(pos.id);visible.add(target.id);
+  for(const t of g.tiles.filter(t=>t!==target&&adjacent(pos,t)).slice(0,2))visible.add(t.id);
+ }
  return {visible,numbers};
 }
 export function forPlayer(room,id){
  const g=room.game;
- const players=room.players.map(p=>({id:p.id,name:p.name,color:p.color,bot:p.bot,connected:p.connected,resources:p.id===id?p.resources:null}));
+ const players=room.players.map(p=>({id:p.id,name:p.name,color:p.color,bot:p.bot,connected:p.connected,grade:p.grade,sales:p.sales,business:p.id===id&&Number.isFinite(p.cash)&&g?.mapId==='florida'?{cash:p.cash,rock:p.rock,compound:p.compound}:undefined,resources:p.id===id?p.resources:null}));
  if(!g)return {code:room.code,host:room.host,players,mapId:room.mapId,preview:room.preview?.map(({id,q,r,terrain,biome})=>({id,q,r,terrain,biome})),game:null};
  const view=visibility(g,id);
  const tiles=g.tiles.map(t=>{
   const isSeen=t.owner===id||view.visible.has(t.id);
-  return {...t,tavern:!!t.tavern&&isSeen,tavernRates:t.tavern&&isSeen?Object.fromEntries(RESOURCES.map(r=>[r,tavernRate(g,t,r)])):null,moveReady:t.owner===id?{army:ready(g,t,'army',1),fastArmy:ready(g,t,'army',.5),navy:ready(g,t,'navy',.5)}:null,number:view.numbers.has(t.id)?t.number:null,numberHidden:t.number!==null&&!view.numbers.has(t.id),
+  return {...t,stock:t.owner===id?t.stock:undefined,till:undefined,tavern:!!t.tavern&&isSeen,tavernRates:t.tavern&&isSeen?Object.fromEntries(RESOURCES.map(r=>[r,tavernRate(g,t,r)])):null,moveReady:t.owner===id?{army:ready(g,t,'army',1),fastArmy:ready(g,t,'army',.5),navy:ready(g,t,'navy',.5)}:null,number:view.numbers.has(t.id)?t.number:null,numberHidden:t.number!==null&&!view.numbers.has(t.id),
    owner:isSeen?t.owner:null,army:isSeen?t.army:0,building:isSeen?t.building:0,structures:isSeen?[...t.structures]:[],ward:isSeen?t.ward:0,attackStock:isSeen?t.attackStock:0,
    navy:isSeen?t.navy:0,boats:isSeen?t.boats:0,visible:isSeen,discovered:(g.discovered[id]||[]).includes(t.id)||isSeen,condensed:isSeen,masked:!isSeen,bridge:isSeen?t.bridge:false};
  });
@@ -398,7 +422,7 @@ export function turnSeconds(room){
 export function settleTurn(room,expired=false){
  const g=room.game;
  room.orders=[];
- if(g?.phase!=='playing')return;
+ if(g?.phase!=='playing'||g.pursuit)return;
  const id=room.players[g.turn].id;
  if(expired&&g.turnStage==='roll'){g.rolled=true;g.turnStage='orders';}
  if(expired&&g.turnStage==='deploy'){
@@ -407,6 +431,6 @@ export function settleTurn(room,expired=false){
   perform(room,id,{type:'confirmDeployment'});
  }
  if(g.turnStage!=='orders')return;
- if(!expired)room.orders=availableOrders(room,COSTS,RESOURCE_STRUCTURE);
+ if(!expired){room.orders=availableOrders(room,COSTS,RESOURCE_STRUCTURE);if(g.mapId==='florida')room.orders=businessOrders(room,room.orders);}
  if(expired||(!room.orders.length&&!g.trade))perform(room,id,{type:'end'});
 }
