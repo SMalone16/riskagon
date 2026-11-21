@@ -107,7 +107,7 @@ export function dispatch(room){
  report(g,'Units dispatched near '+BIOMES[target.biome].name+'.',target);
 }
 export function retreatTiles(g,t){
- return g.tiles.filter(n=>n.owner===t.owner&&adjacent(n,t)&&sea(t)===sea(n));
+ return g.tiles.filter(n=>n.owner===t.owner&&adjacent(n,t)&&(!sea(n)||sea(t)||n.boats*4>n.navy));
 }
 export function policeDecision(room,id,a,battle){
  const g=room.game,c=g.pursuit;
@@ -118,16 +118,16 @@ export function policeDecision(room,id,a,battle){
   const allocations=Object.entries(a.allocations||{}),legal=retreatTiles(g,t);
   if(!allocations.length||allocations.some(([key,n])=>!legal.some(u=>u.id===key)||!Number.isSafeInteger(n)||n<0)||allocations.reduce((sum,[,n])=>sum+n,0)!==members)throw Error('Allocate every member to adjacent friendly turf.');
   let boats=t.boats;
-  if(sea(t)){
-   const needed=allocations.reduce((sum,[key,n])=>{const u=legal.find(v=>v.id===key);return sum+Math.max(0,Math.ceil((u.navy+n)/4)-u.boats);},0);
-   if(needed>boats)throw Error('Keep each retreating crew within boat capacity.');
-  }
-  for(const [key,n] of allocations){
-   const to=legal.find(u=>u.id===key);
-   if(sea(t)){to.navy+=n;const count=Math.max(0,Math.ceil(to.navy/4)-to.boats);to.boats+=count;boats-=count;}
+  const receiving=allocations.map(([key,n])=>({to:legal.find(u=>u.id===key),n})).filter(entry=>entry.n>0);
+  const water=receiving.filter(({to})=>sea(to));
+  const needed=water.reduce((sum,{to,n})=>sum+Math.max(0,Math.ceil((to.navy+n)/4)-to.boats),0);
+  if(needed>boats)throw Error('Each retreating water crew needs boat capacity. Move the rest to friendly land.');
+  for(const {to,n} of receiving){
+   if(sea(to)){to.navy+=n;const count=Math.max(0,Math.ceil(to.navy/4)-to.boats);to.boats+=count;boats-=count;}
    else to.army+=n;
   }
-  if(sea(t)&&boats)legal.find(u=>u.id===allocations[0][0]).boats+=boats;
+  // Empty skiffs accompany the evacuating fleet. Skiffs left behind are seized.
+  if(boats&&water.length)water[0].to.boats+=boats;
   post(g,p,'retreat','Crew evacuated before the raid.',t);
  }else if(a.type==='defend'){
   post(g,p,'defend','Standing our ground. Defense dice are on the table.',t);
@@ -152,7 +152,10 @@ export function businessBot(room,steps){
  const actions=opts.filter(o=>o.type==='enterprise');
  const take=o=>({type:'enterprise',tile:o.tile,target:o.target});
  const buy=k=>actions.find(o=>o.target===k);
- for(const item of ['sell8',...(p.grade===0?['upgrade']:[]),'sell4','sell2','sell1','craft','refineRock','refineCompound']){
+ const aggressive=['aggro','navalAggro'].includes(p.profile);
+ const batch=p.profile==='steady'||p.profile==='homebody'?4:2;
+ const sales=[8,4,2,1].filter(n=>n>=batch||p.cash<250).map(n=>'sell'+n);
+ for(const item of [...(p.grade<(aggressive?3:1)?['upgrade']:[]),...sales,'craft','refineRock','refineCompound']){
   if(buy(item))return take(buy(item));
  }
  const shipment=actions.find(o=>/^(dust|glue)@/.test(o.target));if(shipment)return take(shipment);
@@ -161,7 +164,7 @@ export function businessBot(room,steps){
  if(road)return {type:'road',edge:road.target};
  const destinations=g.tiles.filter(t=>!own.some(u=>u.biome===t.biome)&&!sea(t));
  const moves=opts.filter(o=>o.type==='march'&&g.tiles.find(t=>t.id===o.target)?.owner!==p.id);
- const rank=o=>{const t=g.tiles.find(t=>t.id===o.target);return Math.min(20,...destinations.map(d=>hexDist(t,d)))+(t.owner?3:0);};
+ const rank=o=>{const t=g.tiles.find(t=>t.id===o.target);return Math.min(20,...destinations.map(d=>hexDist(t,d)))+(t.owner?(aggressive?-1:4):0);};
  moves.sort((a,b)=>rank(a)-rank(b));if(moves.length)return {type:'march',from:moves[0].tile,to:moves[0].target,amount:moves[0].max};
  if(p.cash>350&&buy('dock'))return take(buy('dock'));
  const ferry=actions.find(o=>o.target.startsWith('boat@'));if(ferry&&!own.some(t=>t.boats))return take(ferry);

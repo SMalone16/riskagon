@@ -74,3 +74,11 @@ test('equipped dice add their grade bonus to each battle face in both roles',()=
   assert.equal(to.owner,defender?'b':'a');
  }
 });
+test('retreat accepts mixed shore and water destinations and conserves fleet capacity',()=>{
+ const room=scenario(),g=room.game,t=g.tiles[4],other=cell(3,1,'beach','b');
+ g.tiles.push(other);const water=g.tiles[5];water.owner='b';water.boats=1;water.navy=3;
+ g.pursuit={target:'b',id:'s',step:1,position:'0,0',against:t.id,strength:2};
+ const move=allocations=>perform(room,'b',{type:'retreat',step:1,call:'s',allocations});
+ assert.throws(()=>move({[water.id]:2}));assert.equal(water.navy,3);
+ move({[water.id]:1,[other.id]:1});assert.equal(other.army,3);assert.equal(water.navy,4);assert.equal(water.boats,1);
+});

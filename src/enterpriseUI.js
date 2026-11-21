@@ -20,7 +20,7 @@ export function businessPanel(g,player,tile){
 }
 export function pursuitPanel(g,id){
  const c=g.pursuit,t=g.tiles.find(n=>n.id===c.against),fight=g.policeBattle;
- const near=g.tiles.filter(n=>n.owner===id&&hexDist(n,t)===1&&(n.biome==='ocean')===(t.biome==='ocean'));
+ const near=g.tiles.filter(n=>n.owner===id&&hexDist(n,t)===1&&(n.biome!=='ocean'||t.biome==='ocean'||n.boats*4>n.navy));
  return '<section class="pursuit"><h2>Police pursuit</h2><p>'+c.strength+' officers · '+escape(c.position)+' → '+escape(c.against)+'</p>'+
  (fight?'<p>Last clash · '+(fight.rounds.at(-1)?.attack.join(' / ')||'—')+' vs '+(fight.rounds.at(-1)?.defense.join(' / ')||'—')+'</p>':'')+
  (id!==c.target?'<p>The defending crew is responding.</p>':'<button data-response="defend">Stand and roll defense</button>'+(near.length?'<p>Or move all '+(t.army+t.navy)+' members to friendly turf.</p>'+near.map(n=>'<label>'+escape(n.id)+' <input type="number" min="0" max="'+(t.army+t.navy)+'" data-evac="'+escape(n.id)+'" value="0"></label>').join('')+'<button data-response="retreat">Confirm retreat</button>':''))+'</section>';
