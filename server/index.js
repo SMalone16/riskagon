@@ -18,6 +18,23 @@ const code=()=>{let id;do{id=randomBytes(3).toString('hex').toUpperCase();}while
 function advance(room){
  if(room.game?.trade){const target=room.players.find(p=>p.id===room.game.trade.to);if(target?.bot){try{perform(room,target.id,{type:room.game.trade.giveCount>=room.game.trade.receiveCount?'acceptTrade':'rejectTrade'});}catch{perform(room,target.id,{type:'rejectTrade'});}}}
  const g=room.game;
+ if(g?.pursuit){
+  clearTimeout(room.clockTimer);
+  const c=g.pursuit,key=c.id+':'+c.step;
+  if(!room.responseKey)room.remaining=Math.max(0,g.deadline-Date.now());
+  if(room.responseKey!==key){
+   clearTimeout(room.responseTimer);room.responseKey=key;c.until=Date.now()+30000;
+   room.responseTimer=setTimeout(()=>{
+    if(g.pursuit!==c||room.responseKey!==key)return;
+    perform(room,c.target,{type:'defend',call:c.id,step:c.step});advance(room);
+   },room.players.find(p=>p.id===c.target)?.bot?1000:30000);
+  }
+  send(room);return;
+ }
+ if(room.responseKey){
+  clearTimeout(room.responseTimer);room.responseKey=null;
+  g.deadline=Date.now()+room.remaining;room.clockTimer=setTimeout(()=>advance(room),room.remaining);
+ }
  if(g?.phase==='playing'){
   const key=()=>g.round+'-'+g.turn;
   settleTurn(room,room.clockKey===key()&&Date.now()>=g.deadline);
@@ -45,7 +62,7 @@ function scheduleBot(room){
  setTimeout(()=>{
   room.botBusy=false;
   const now=room.game;
-  if(!now||now.phase==='finished')return;
+  if(!now||now.phase==='finished'||now.pursuit)return;
   const id=now.phase==='draft'?currentDrafter(room):room.players[now.turn]?.id;
   if(id!==bot.id)return;
   try{
@@ -134,7 +151,7 @@ io.on('connection',socket=>{
  socket.on('game:action',(data={},reply=()=>{})=>{
   const room=rooms.get(socket.data.code);
   if(!room)return reply({ok:false,error:'Join a room first.'});
-  if(room.game?.phase==='playing'&&Date.now()>=room.game.deadline){advance(room);return reply({ok:false,error:'Turn time expired.'});}
+  if(!room.game?.pursuit&&room.game?.phase==='playing'&&Date.now()>=room.game.deadline){advance(room);return reply({ok:false,error:'Turn time expired.'});}
   try{perform(room,socket.data.id,data);reply({ok:true,roll:room.game.lastRoll,battle:room.game.lastBattle});advance(room);}
   catch(e){reply({ok:false,error:e.message});}
  });

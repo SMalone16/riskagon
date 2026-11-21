@@ -47,7 +47,7 @@ export function availableOrders(room,costs,industries){
     if(max)add('march',tile,to.id,max);
    }
    if(isWater(to)&&(!to.owner||to.owner===id)&&tile.structures.includes('shipyard')&&afford(costs.boat))add('launch',tile,to.id);
-   if(tile.building&&to.owner===id&&isWater(to)&&to.boats){
+   if((tile.building||g.mapId==='florida'&&tile.structures.includes('dock'))&&to.owner===id&&isWater(to)&&to.boats){
     const max=Math.min(tile.army-1,ready(g,tile,'army',.5),to.boats*BOAT_CAPACITY-to.navy);
     if(max>0)add('embark',tile,to.id,max);
    }

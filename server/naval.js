@@ -25,7 +25,7 @@ export function performNaval(g,p,action,{pay,battle}){
   pay(p,NAVAL_COSTS.boat);to.owner=p.id;to.boats=(to.boats||0)+1;return true;
  }
  if(type==='embark'){
-  if(isWater(from)||!from.building||!isWater(to)||to.owner!==p.id||!to.boats)throw Error('Embark from your coastal outpost or settlement onto your adjacent boat.');
+  if(isWater(from)||!(from.building||g.mapId==='florida'&&from.structures.includes('dock'))||!isWater(to)||to.owner!==p.id||!to.boats)throw Error('Embark from your coastal outpost or settlement onto your adjacent boat.');
   const count=action.amount,capacity=to.boats*BOAT_CAPACITY-(to.navy||0);
   if(!integer(count,1,Math.min(from.army-1,capacity)))throw Error('Leave one garrison and respect four troops per boat.');
   from.army-=count;to.navy=(to.navy||0)+count;return true;

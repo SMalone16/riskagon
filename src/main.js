@@ -1,3 +1,5 @@
+import {businessPanel,pursuitPanel,makePhone} from './enterpriseUI.js';
+import {CREWS,MATERIALS} from '../shared/enterprise.js';
 import './style.css';
 import {harvestEffects} from './harvest.js';
 import {MAPS,COLORS,BIOMES,FACTIONS} from '../shared/maps.js';
@@ -43,7 +45,8 @@ const admissionKey='riskagon:admitted';
 function toast(message,error=false){const t=$('#toast');t.textContent=message;t.className=error?'show error':'show';clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.className='',4000);}
 function me(){return state?.players.find(p=>p.id===id);}
 function isActive(){return state?.game?.phase==='playing'&&state.players[state.game.turn]?.id===id;}
-function canOrder(){return isActive()&&state.game.turnStage==='orders';}
+function inCity(){return state?.game?.mapId==='florida';}
+function canOrder(){return !state?.game?.pursuit&&isActive()&&state.game.turnStage==='orders';}
 function command(event,data,onSuccess){socket.timeout(15000).emit(event,data,(error,response)=>{if(error||!response?.ok){toast(response?.error||'Connection interrupted. Try again.',true);return;}onSuccess?.(response);});}
 function act(data,done){command('game:action',data,done);}
 function displayRoom(value){code=value;history.replaceState(null,'','?room='+code);}
@@ -74,6 +77,7 @@ function canDock(tile){return tile&&!tile.owner&&coastal(state.game,tile)&&state
 function backToTerritory(){borderMode=null;originVertex=null;tradeOpen=false;selected=null;buildOpen=false;roadMode=false;marchFrom=null;navalMode=null;board.fitDiscovered();render();}
 const board=new Board($('#board'),tile=>{
  const g=state?.game;if(!g)return;
+ if(g.pursuit)return;
  if(g.phase==='draft'){if(g.draftStage==='spawn'&&g.spawnChoices.includes(tile))command('draft:pick',{kind:'spawn',value:tile});return;}
  if(navalMode&&canOrder()){
   const mode=navalMode;if(!moveTo(mode,tile))return;navalMode=null;
@@ -102,11 +106,12 @@ const dice=new BoardDice(board,throwData=>new Promise((resolve,reject)=>{
  socket.timeout(15000).emit('game:action',{type:'roll',throw:throwData},(error,r)=>{if(error||!r?.ok){reject(Error(r?.error||'Roll interrupted. Try again.'));return;}resolve();});
 }),message=>toast(message,true));
 board.onFrame=now=>dice.update(now);
+const phone=makePhone();
 const effects=harvestEffects(board,icons,r=>me()?.resources?.[r]||0);
 let harvestId=null,serverOffset=0;
 function updateClock(){
  const el=$('#turnClock');if(!el)return;
- const seconds=Math.max(0,Math.ceil((state.game.deadline-Date.now()-serverOffset)/1000));
+ const seconds=Math.max(0,Math.ceil(((state.game.pursuit?.until||state.game.deadline)-Date.now()-serverOffset)/1000));
  el.textContent=Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');
 }
 setInterval(updateClock,250);
@@ -140,18 +145,29 @@ function cycleMap(direction){
  command('room:map',{mapId:maps[(index+direction+maps.length)%maps.length]});
 }
 window.addEventListener('keydown',e=>{
+ if(state?.game?.mapId==='florida'&&e.key==='ArrowUp'&&!e.target.closest?.('input,textarea,select,dialog')&&!$('#rules').open){
+  e.preventDefault();e.stopImmediatePropagation();if(!e.repeat)phone.toggle();return;
+ }
  if(state&&!state.game&&state.host===id&&!e.target.closest?.('input,textarea,select,dialog')&&!document.querySelector('dialog[open]')&&['ArrowLeft','ArrowRight'].includes(e.key)){
   e.preventDefault();e.stopImmediatePropagation();if(!e.repeat)cycleMap(e.key==='ArrowLeft'?-1:1);return;
  }
  if(e.target.closest?.('input,textarea,select,dialog')||!state?.game)return;
  if(e.key==='Escape'){e.preventDefault();board.keys.clear();backToTerritory();return;}
  const tile=state.game.tiles.find(t=>t.id===selected);
+ if(state.game.pursuit)return;
  if(isActive()&&state.game.turnStage==='deploy'&&tile?.owner===id&&tile.building&&['w','s','W','S','ArrowUp','ArrowDown','ArrowRight','ArrowLeft'].includes(e.key)){
   e.preventDefault();e.stopImmediatePropagation();board.keys.clear();changeAllocation(['w','W','ArrowUp','ArrowRight'].includes(e.key)?1:-1);
  }
 },true);
 function render(){
  const g=state?.game,phase=g?.phase,stage=g?.turnStage;
+ const city=(g?.mapId||state?.mapId)==='florida',crew=CREWS[me()?.color];
+ document.body.classList.toggle('biscayne',city);
+ $('#hudToggle').textContent=city?'Crew & treasury':'Kingdom & treasury';
+ $('.map-tools [data-action=home]').textContent=city?'⌂ My turf':'⌂ My kingdom';
+ $('#hud h2').textContent=city?'Organizations':'Kingdoms';
+ document.documentElement.style.setProperty('--crew',crew?'#'+crew.color.toString(16).padStart(6,'0'):'#ff885f');
+ const palette=city?Object.fromEntries(Object.entries(CREWS).map(([k,v])=>[k,v.color])):FACTIONS;
  const flow=phase+':'+g?.round+':'+g?.turn+':'+stage;
  if(flow!==lastFlow){buildOpen=false;roadMode=false;marchFrom=null;navalMode=null;lastFlow=flow;borderMode=null;originVertex=null;tradeOpen=false;}
  $('#entry').hidden=!!state;$('#lobby').hidden=!state||!!g;$('#control').hidden=!g;$('#turnBanner').hidden=!g;
@@ -164,8 +180,8 @@ function render(){
  let controls='',guide='WASD / arrows to pan · Scroll to zoom · Hover to inspect';
  if(phase==='draft'){
   const order=g.draftStage==='color'?g.draftOrder:[...g.draftOrder].reverse(),drafter=order[g.draftIndex],mine=drafter===id,name=state.players.find(p=>p.id===drafter)?.name;
-  $('#turnBanner').innerHTML=`<b>${mine?'Your pick':safe(name)+' is drafting'}</b> · ${g.draftStage==='color'?'Choose a banner':'Choose your homeland'}`;
-  controls=g.draftStage==='color'?`<h2>Choose your kingdom</h2><div class="color-draft">${COLORS.map(c=>`<button data-color="${c}" ${mine&&!state.players.some(p=>p.color===c)?'':'disabled'}><i style="background:#${FACTIONS[c].toString(16).padStart(6,'0')}"></i>${c}</button>`).join('')}</div>`:`<h2>${mine?'Choose a homeland at least 4 hexes from other starts':'Waiting for a homeland pick'}</h2><details><summary>Starting locations</summary><div class="draft-options">${g.spawnChoices.map(x=>`<button data-spawn="${x}" ${mine?'':'disabled'}>${x}</button>`).join('')}</div></details>`;
+  $('#turnBanner').innerHTML=`<b>${mine?'Your pick':safe(name)+' is drafting'}</b> · ${g.draftStage==='color'?(city?'Choose an organization':'Choose a banner'):'Choose your homeland'}`;
+  controls=g.draftStage==='color'?`<h2>${city?'Choose your organization':'Choose your kingdom'}</h2><div class="color-draft">${COLORS.map(c=>`<button data-color="${c}" style="--banner:#${palette[c].toString(16).padStart(6,'0')}" ${mine&&!state.players.some(p=>p.color===c)?'':'disabled'}><i style="background:#${palette[c].toString(16).padStart(6,'0')}"></i>${city?CREWS[c].name+'<small>'+CREWS[c].unit+' · '+CREWS[c].base+'</small>':c}</button>`).join('')}</div>`:`<h2>${mine?'Choose a homeland at least 4 hexes from other starts':'Waiting for a homeland pick'}</h2><details><summary>Starting locations</summary><div class="draft-options">${g.spawnChoices.map(x=>`<button data-spawn="${x}" ${mine?'':'disabled'}>${x}</button>`).join('')}</div></details>`;
   guide='3 starting troops · No opening-round reinforcements';
  }else if(g){
   const active=isActive(),orders=canOrder(),rolling=stage==='rolling';
@@ -198,7 +214,7 @@ function render(){
        if(canBridge(tile))controls+=btn('Build bridge','openBuild');
        if(!tile.navy)controls+='<p>Select a neighboring coastal outpost to embark troops onto this boat.</p>';
       }else{
-       controls+=`<div class="actions">${btn('Build…','openBuild')}${btn('March / attack','march',tile.army>1&&(tile.moveReady?.fastArmy??tile.army)>0)}${tile.structures.includes('shipyard')?btn('Launch boat… · '+costLabel('boat'),'launch',canPay('boat')):''}${tile.building&&coastal(g,tile)?btn('Embark…','embark',tile.army>1):''}</div>`;
+       controls+=`<div class="actions">${btn('Build…','openBuild')}${btn('March / attack','march',tile.army>1&&(tile.moveReady?.fastArmy??tile.army)>0)}${tile.structures.includes('shipyard')?btn('Launch boat… · '+costLabel('boat'),'launch',canPay('boat')):''}${(tile.building||city&&tile.structures.includes('dock'))&&coastal(g,tile)?btn('Embark…','embark',tile.army>1):''}</div>`;
       }
       controls+=`<details class="border-tools"><summary>Borders</summary>${btn('Road vertices','road')}${btn('Wood wall','wood')}${btn('Stone wall','stone')}${btn('Gate','gate')}</details>`;
       if(tile.army>1||tile.navy>0)controls+=`<div class="quantity"><label for="amount">Troops for order</label><input id="amount" type="number" min="1" max="${isWater(tile)?tile.navy:tile.army-1}" value="${amount}"/></div>`;
@@ -217,11 +233,23 @@ function render(){
   controls=`<div class="trade-form"><label>Partner<select id="tradePartner">${g.tiles.filter(t=>optionsFor('trade').some(o=>o.target==='tavern:'+t.id)).map(t=>`<option value="tavern:${t.id}">Tavern ${t.id}</option>`).join('')}${state.players.filter(p=>optionsFor('trade').some(o=>o.target===p.id)).map(p=>`<option value="${p.id}">${safe(p.name)}</option>`).join('')}</select></label><label>Give<select id="give">${Object.keys(icons).map(r=>`<option>${r}</option>`).join('')}</select><input id="giveCount" aria-label="Offer amount" type="number" min="1" value="1"/></label><label>Receive<select id="receive">${Object.keys(icons).map(r=>`<option ${r==='ore'?'selected':''}>${r}</option>`).join('')}</select><input id="receiveCount" aria-label="Receive amount" type="number" min="1" value="1"/></label><small>${g.tiles.filter(t=>t.tavern&&t.tavernRates).map(t=>'Tavern '+t.id+': '+Object.entries(t.tavernRates).map(([r,n])=>r+' '+n+':1').join(' · ')).join('<br>')}</small><small>Taverns: local resource 1:1; imports cost 2–4 offered units per item. Player trades require acceptance.</small>${btn('Send offer / buy','sendTrade')}${btn('Close trade','trade')}</div>`;
  }
  if(g?.trade?.to===id)controls+=`<p>Trade offer: receive ${g.trade.giveCount} ${safe(g.trade.give)} for ${g.trade.receiveCount} ${safe(g.trade.receive)}.</p>${btn('Accept trade','acceptTrade',(me()?.resources?.[g.trade.receive]||0)>=g.trade.receiveCount)}${btn('Reject trade','rejectTrade')}`;
- $('#treasury').innerHTML=Object.entries(icons).map(([r,icon])=>`<span>${icon} ${r} <b data-balance="${r}">${me()?.resources?.[r]||0}</b></span>`).join('');
+ if(city&&canOrder()&&g.phase==='playing')controls=businessPanel(g,me(),tile)+controls;
+ if(city&&g?.pursuit)controls=pursuitPanel(g,id);
+ else if(city&&g?.policeBattle?.rounds?.length){
+  const last=g.policeBattle.rounds.at(-1);
+  controls+='<details><summary>Last police clash</summary><p>Police rolled '+last.attack.join(' · ')+' / crew defense '+last.defense.join(' · ')+'</p></details>';
+ }
+
+ $('#treasury').innerHTML=Object.entries(icons).map(([r,icon])=>`<span>${icon} ${city?MATERIALS[r]:r} <b data-balance="${r}">${me()?.resources?.[r]||0}</b></span>`).join('');
+ if(city&&me()?.business)$('#treasury').insertAdjacentHTML('afterbegin','<b>$'+me().business.cash.toLocaleString()+'</b><span>Dice Rock '+me().business.rock+'</span><span>Compound '+me().business.compound+'</span>');
  effects.refresh();
  if(phase==='playing')$('#turnBanner').insertAdjacentHTML('beforeend',' <strong id="turnClock" aria-label="Time remaining"></strong>');
  updateClock();
  $('#control').innerHTML=controls;
+ if(city&&crew){
+  const walker=document.createTreeWalker($('#control'),NodeFilter.SHOW_TEXT);
+  while(walker.nextNode())walker.currentNode.textContent=walker.currentNode.textContent.replace(/troops|soldiers/gi,crew.unit).replace(/outposts?/gi,crew.base).replace('Your kingdom','Your crew');
+ }
  if(canOrder()&&tile&&!borderMode&&!marchFrom&&!navalMode){
   const types={openBuild:['build','bridge'],road:['road'],wood:['wood'],stone:['stone'],gate:['gate'],march:['march'],sail:['sail'],land:['land'],bombard:['bombard'],launch:['launch'],embark:['embark'],landingDock:['landingDock']};
   for(const button of $('#control').querySelectorAll('[data-action]')){
@@ -230,29 +258,41 @@ function render(){
  }
  const bordersMenu=$('.border-tools');if(bordersMenu&&!bordersMenu.querySelector('button'))bordersMenu.remove();
  validateTrade();$('#mapGuide').textContent=guide;
- board.update(g?.tiles||state?.preview||preview(),{selected,borderMode,validEdges:borderMode?optionsFor(borderMode,selected).map(o=>o.target):[],originVertex,borders:g?.borders||{},deploy:isActive()&&stage==='deploy',allocations:g?.allocations?.[id]||{},destinations:destinations(),roadMode:canOrder()&&roadMode,roads:g?.roads||{},players:state?.players||[],myId:id,spawnChoices:phase==='draft'&&g.draftStage==='spawn'?g.spawnChoices:[]});
+ if(city&&g)$('#control').insertAdjacentHTML('beforeend','<button data-action="phone">Biscayne Wire ↑</button>');
+ board.update(g?.tiles||state?.preview||preview(),{city,patrol:g?.pursuit?.position,policeTarget:g?.pursuit?.against,selected,borderMode,validEdges:borderMode?optionsFor(borderMode,selected).map(o=>o.target):[],originVertex,borders:g?.borders||{},deploy:isActive()&&stage==='deploy',allocations:g?.allocations?.[id]||{},destinations:destinations(),roadMode:canOrder()&&roadMode,roads:g?.roads||{},players:state?.players||[],myId:id,spawnChoices:phase==='draft'&&g.draftStage==='spawn'?g.spawnChoices:[]});
  const previewKey=state&&!g?state.mapId+':'+state.preview.length:null;
  if(previewKey&&previewKey!==lastPreview)requestAnimationFrame(()=>{board.resize();board.fitTiles(board.tiles);});
  lastPreview=previewKey;
  const viewKey=phase==='playing'&&isActive()?g.round+':'+g.turn:'';
- if(viewKey&&viewKey!==lastTurnView){selected=null;requestAnimationFrame(()=>{board.resize();board.fitDiscovered();});lastTurnView=viewKey;toast('Your turn — command your kingdom.');}
+ if(viewKey&&viewKey!==lastTurnView){selected=null;requestAnimationFrame(()=>{board.resize();board.fitDiscovered();});lastTurnView=viewKey;toast(city?'Your turn — run your enterprise.':'Your turn — command your kingdom.');}
  $('#turnBanner').classList.toggle('your-turn',isActive());
- dice.setMode(isActive()&&stage==='roll'?'resource':'idle');
+ const roller=state?.players[g?.turn];
+ const faceColor=city&&roller?.grade?palette[roller.color]:0xffefd0;
+ for(const die of dice.dice){die.children[0].material.color.setHex(faceColor);die.children[1].material.color.setHex(city&&roller?.grade?0xf9ecd9:0x20373c);}
+ dice.setMode(!g?.pursuit&&isActive()&&stage==='roll'?'resource':'idle');
  if(g?.lastRoll)dice.play(g.lastRoll,g.serverNow);
- $('#players').innerHTML=state?.players.map(p=>`<div class="player"><i style="background:#${(FACTIONS[p.color]??0xacbcae).toString(16).padStart(6,'0')}"></i><b>${safe(p.name)}${p.id===id?' · You':''}</b><span>${g?.scores?.[p.id]??0} VP</span></div>`).join('')||'<p>Create a realm to begin.</p>';
- $('#resources').innerHTML=me()?.resources?Object.entries(icons).map(([key,icon])=>`<div class="resource"><span>${icon} ${key}</span><b>${me().resources[key]||0}</b></div>`).join(''):'<p>Available after drafting.</p>';
+ $('#players').innerHTML=state?.players.map(p=>`<div class="player"><i style="background:#${(palette[p.color]??0xacbcae).toString(16).padStart(6,'0')}"></i><b>${safe(p.name)}${p.id===id?' · You':''}</b><span>${city?'$'+(p.sales||0).toLocaleString()+' sales':(g?.scores?.[p.id]??0)+' VP'}</span></div>`).join('')||'<p>Create a realm to begin.</p>';
+ $('#resources').innerHTML=me()?.resources?Object.entries(icons).map(([key,icon])=>`<div class="resource"><span>${icon} ${city?MATERIALS[key]:key}</span><b>${me().resources[key]||0}</b></div>`).join(''):'<p>Available after drafting.</p>';
 
+ phone.update(state);
  $('#log').innerHTML=(g?.lastBattle?`<p>⚔ ${safe(g.lastBattle.attacker)} attacked ${safe(g.lastBattle.defender)} · ${safe(g.lastBattle.result)}</p>`:'')+(g?.log.map(line=>`<p>${safe(line)}</p>`).join('')||'');
 }
 $('#create').onclick=()=>enterRoom(true);
 $('#join').onclick=()=>enterRoom();
 $('#codeInput').onkeydown=e=>{if(e.key==='Enter'&&!$('#join').disabled)enterRoom();};
 root.addEventListener('click',async e=>{
+ const business=e.target.closest('[data-enterprise]');
+ if(business){act({type:'enterprise',tile:selected,target:business.dataset.enterprise});return;}
+ const response=e.target.closest('[data-response]');if(response&&state.game.pursuit){
+  const c=state.game.pursuit;
+  act({type:response.dataset.response,call:c.id,step:c.step,allocations:Object.fromEntries([...document.querySelectorAll('[data-evac]')].map(n=>[n.dataset.evac,Number(n.value)]))});return;
+ }
  const el=e.target.closest('[data-action],[data-color],[data-spawn],[data-build]');if(!el||el.disabled)return;
  if(el.dataset.color){command('draft:pick',{kind:'color',value:el.dataset.color});return;}
  if(el.dataset.spawn){command('draft:pick',{kind:'spawn',value:el.dataset.spawn});return;}
  if(el.dataset.build){act(el.dataset.build==='bridge'?{type:'bridge',tile:selected}:{type:'build',tile:selected,kind:el.dataset.build});return;}
  const action=el.dataset.action;
+ if(action==='phone'){phone.toggle();return;}
  if(action==='prevMap'||action==='nextMap'){cycleMap(action==='prevMap'?-1:1);return;}
  if(action==='trade'){tradeOpen=!tradeOpen;render();return;}
  if(action==='acceptTrade'||action==='rejectTrade'){act({type:action});return;}
@@ -263,7 +303,9 @@ root.addEventListener('click',async e=>{
  if(action==='cancelBorder'){borderMode=null;originVertex=null;render();return;}
  if(['moveMore','moveLess','moveAll'].includes(action)){const t=state.game.tiles.find(t=>t.id===selected);amount=action==='moveAll'?Math.min(t.army-1,t.moveReady?.army??t.army-1):Math.max(1,Math.min(t.army-1,amount+(action==='moveMore'?1:-1)));render();return;}
 
- if(action==='help'){const d=$('#rules');d.open?d.close():d.showModal();return;}
+ if(action==='help'){const d=$('#rules');
+  if(!d.dataset.original)d.dataset.original=d.innerHTML;
+  d.innerHTML=inCity()?'<button data-action="help" class="close">×</button><h1>Biscayne Dice Enterprise</h1><p>First to $15,000 in dice sales wins. Secure Pine Rocklands for Dice Rock and Everglades for Dice Compound. Your crew base earns $200 on its number.</p><p>Build a Keyside Pulverizer on Keys and Shoreline Binder Works on beach. Refine, then ship stock to your Miami Dice Lab along occupied roads or between shoreline docks connected by water. Craft one die from one dust and one glue.</p><p>Sell in batches or equip a die. Your first upgrade unlocks crew colors. Each later upgrade adds one to every attack and defense die. A seven sends police after another crew. Fight or split a retreat before the response timer ends.</p><p>Press ↑ for Biscayne Wire.</p>':d.dataset.original;d.open?d.close():d.showModal();return;}
  if(action==='hud'){hudOpen=!hudOpen;render();return;}
  if(action==='copy'){try{await navigator.clipboard.writeText(location.href);toast('Invite link copied.');}catch{toast(location.href);}return;}
  if(action==='bot'||action==='start'){command('room:'+(action==='bot'?'addBot':'start'),{});return;}
